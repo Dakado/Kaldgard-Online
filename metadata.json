@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Prontera 3D — Středověké RPG město",
+  "description": "šla by ta grafika udělat na urovni diabla IV ? aby to nebylo takové low poly ale opravdu velmi vysoke rozlišení textur, město zachovej ale postavy, baračky, stromy a všechno udělej aby to mělo grafiku na urovni diablo IV, zachovej město prontera, jenom ho předelej do 4K kvality včetně postav, nechceme kresleny komiks ale fotorealisticky vypadají medieval RPG hru, ostatní mechaniky neměn, chceme jen zásadně posunout grafiku na uplně jinou uroven fotorelismu 4K nature",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
