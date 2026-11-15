@@ -12,8 +12,10 @@ import {
   PronteraController,
   TimeOfDay,
   WeatherMode,
+  ZoneId,
   mountPronteraScene,
 } from './scene/PronteraScene';
+import { getZoneName } from './world/fieldMaps';
 import { PLAYER_SPAWN, getDistrictAt } from './world/pronteraLayout';
 
 function getInitialMode(): 'title' | 'playing' {
@@ -33,6 +35,8 @@ export default function App() {
   const [muted, setMuted] = useState(true);
   const [contextLost, setContextLost] = useState(false);
   const [hud, setHud] = useState<HudSnapshot>({
+    zoneId: 'prontera',
+    zoneName: getZoneName('prontera'),
     x: PLAYER_SPAWN.x,
     z: PLAYER_SPAWN.z,
     yaw: PLAYER_SPAWN.yaw,
@@ -121,6 +125,13 @@ export default function App() {
     controllerRef.current?.teleportToLandmark(id);
   }, []);
 
+  const handleWarpZone = useCallback(
+    (zoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => {
+      controllerRef.current?.warpToZone(zoneId, spawnX, spawnZ, spawnYaw);
+    },
+    [],
+  );
+
   const handleMinimapWalk = useCallback((x: number, z: number) => {
     controllerRef.current?.walkToWorldPoint(x, z);
   }, []);
@@ -184,6 +195,7 @@ export default function App() {
           onToggleMute={handleToggleMute}
           onAttack={handleAttack}
           onSelectLandmark={handleSelectLandmark}
+          onWarpZone={handleWarpZone}
           onMinimapWalk={handleMinimapWalk}
         />
       )}

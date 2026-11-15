@@ -8,7 +8,9 @@ import {
   applyDamageToMob,
   computeSwordDamage,
   findNearestAliveMob,
+  getMobSpawnsForZone,
 } from './combat';
+import { ZoneId, createZoneNavGrid } from './fieldMaps';
 import { PRONTERA_NAV } from './pathfinding';
 
 test('field mob spawns sit outside Prontera walls in walkable field spots', () => {
@@ -23,11 +25,36 @@ test('field mob spawns sit outside Prontera walls in walkable field spots', () =
   }
 });
 
+test('all 4 Prontera field maps spawn Wolves, Goblins, and Tree Ents on walkable terrain', () => {
+  const fieldIds: Exclude<ZoneId, 'prontera'>[] = [
+    'prt_fild08',
+    'prt_fild06',
+    'prt_fild05',
+    'prt_fild01',
+  ];
+  for (const zoneId of fieldIds) {
+    const spawns = getMobSpawnsForZone(zoneId);
+    const nav = createZoneNavGrid(zoneId);
+    assert.ok(spawns.length >= 30, `Expected rich hunting ground in ${zoneId}, got ${spawns.length}`);
+    const kinds = new Set(spawns.map((s) => s.kind));
+    assert.ok(kinds.has('wolf'), `${zoneId} should spawn wolves`);
+    assert.ok(kinds.has('goblin'), `${zoneId} should spawn goblins`);
+    assert.ok(kinds.has('ent'), `${zoneId} should spawn tree ents`);
+    for (const s of spawns) {
+      assert.equal(
+        nav.pointHitsCollider(s.x, s.z, 0.55),
+        false,
+        `Field mob ${s.id} (${s.x}, ${s.z}) in ${zoneId} should not clip collider/cliff/water`,
+      );
+    }
+  }
+});
+
 test('sword damage scales with combo and awards zeny/exp on kill', () => {
-  const tmpl = MOB_TEMPLATES.poring;
+  const tmpl = MOB_TEMPLATES.mire_slime;
   const mob: MobCombatEntity = {
-    id: 'test_poring',
-    kind: 'poring',
+    id: 'test_slime',
+    kind: 'mire_slime',
     name: tmpl.name,
     level: tmpl.level,
     x: 0,
@@ -63,3 +90,4 @@ test('findNearestAliveMob selects closest living mob within range', () => {
   const found = findNearestAliveMob(mobs, 0, 90, SWORDSMAN_MELEE_RANGE);
   assert.equal(found?.id, 'near');
 });
+

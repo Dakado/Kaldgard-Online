@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PortalSpec } from '../world/fieldMaps';
 import {
   BUILDINGS,
   BuildingSpec,
@@ -1291,7 +1292,48 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
     group.add(buildSingleBuilding(spec, mats));
   }
 
-  // Market Square colorful Merchant Stalls with pitched striped awnings, rafters, valances & goods
+  // Market Square & Tavern Lane Merchant & Fruit Stalls with flush pitched awnings & 3D fruit displays
+  const addWickerBasket = (
+    parent: THREE.Object3D,
+    x: number,
+    y: number,
+    z: number,
+    rTop: number,
+    rBot: number,
+    h: number,
+    fruitMat: THREE.Material,
+    fruitScale = 0.085,
+    fruitCount = 7,
+  ) => {
+    const basket = new THREE.Mesh(
+      new THREE.CylinderGeometry(rTop, rBot, h, 14),
+      mats.wickerMat,
+    );
+    basket.position.set(x, y + h * 0.5, z);
+    basket.castShadow = true;
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(rTop, 0.022, 6, 14),
+      mats.darkTimber,
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(x, y + h, z);
+    parent.add(basket, rim);
+
+    const sphereGeo = new THREE.SphereGeometry(fruitScale, 10, 8);
+    for (let f = 0; f < fruitCount; f++) {
+      const ang = (f / Math.max(1, fruitCount - 1)) * Math.PI * 2;
+      const dist = f === 0 ? 0 : rTop * 0.52;
+      const fx = x + Math.cos(ang) * dist;
+      const fz = z + Math.sin(ang) * dist;
+      const fy = y + h + (f === 0 ? fruitScale * 0.72 : fruitScale * 0.38);
+      const item = new THREE.Mesh(sphereGeo, fruitMat);
+      item.position.set(fx, fy, fz);
+      item.scale.set(1.0, 0.92, 1.0);
+      item.castShadow = true;
+      parent.add(item);
+    }
+  };
+
   for (const stall of MARKET_STALLS) {
     const sg = new THREE.Group();
     sg.position.set(stall.x, 0, stall.z);
@@ -1309,79 +1351,148 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
       roughness: 0.82,
     });
 
-    // Timber frame corner posts (taller back posts -> pitched front awning)
+    // Exact roof anchor coordinates so frontSlope & backSlope meet seamlessly at ridge peak!
+    const zBackEave = -1.26;
+    const yBackEave = 2.74;
+    const zRidge = -0.32;
+    const yRidge = 3.12;
+    const zFrontEave = 1.44;
+    const yFrontEave = 2.48;
+
+    const dyF = yRidge - yFrontEave;
+    const dzF = zFrontEave - zRidge;
+    const frontLen = Math.hypot(dyF, dzF);
+    const frontAngle = Math.atan2(dyF, dzF);
+
+    const dyB = yRidge - yBackEave;
+    const dzB = zRidge - zBackEave;
+    const backLen = Math.hypot(dyB, dzB);
+    const backAngle = Math.atan2(dyB, dzB);
+
+    // Timber corner posts & braces aligned directly under roof planes
     for (const px of [-1.88, 1.88]) {
       const backPost = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.098, 2.95, 10),
+        new THREE.CylinderGeometry(0.085, 0.098, 2.80, 10),
         mats.darkTimber,
       );
-      backPost.position.set(px, 1.475, -1.05);
+      backPost.position.set(px, 1.40, -1.04);
       backPost.castShadow = true;
-      const frontPost = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.098, 2.55, 10),
-        mats.darkTimber,
-      );
-      frontPost.position.set(px, 1.275, 1.05);
-      frontPost.castShadow = true;
-      sg.add(backPost, frontPost);
 
-      // Angled timber side rafters
-      const rafter = new THREE.Mesh(
-        new THREE.BoxGeometry(0.11, 0.12, 2.75),
+      const frontPost = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.085, 0.098, 2.54, 10),
         mats.darkTimber,
       );
-      rafter.position.set(px, 2.72, 0.02);
-      rafter.rotation.x = 0.20;
-      sg.add(rafter);
+      frontPost.position.set(px, 1.27, 1.04);
+      frontPost.castShadow = true;
+
+      // Side tie beam between posts
+      const tieBeam = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 0.09, 2.12),
+        mats.darkTimber,
+      );
+      tieBeam.position.set(px, 2.46, 0);
+
+      // Front sloped rafter flush under frontSlope
+      const frontRafter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.10, 0.09, frontLen - 0.04),
+        mats.darkTimber,
+      );
+      frontRafter.position.set(px, (yRidge + yFrontEave) * 0.5 - 0.055, (zRidge + zFrontEave) * 0.5);
+      frontRafter.rotation.x = frontAngle;
+
+      // Back sloped rafter flush under backSlope
+      const backRafter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.10, 0.09, backLen - 0.04),
+        mats.darkTimber,
+      );
+      backRafter.position.set(px, (yRidge + yBackEave) * 0.5 - 0.055, (zRidge + zBackEave) * 0.5);
+      backRafter.rotation.x = -backAngle;
+
+      sg.add(backPost, frontPost, tieBeam, frontRafter, backRafter);
     }
 
-    // Wooden ridge & eave cross-beams
-    const ridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(4.15, 0.12, 0.12), mats.darkTimber);
-    ridgeBeam.position.set(0, 3.04, -0.35);
-    const frontBeam = new THREE.Mesh(new THREE.BoxGeometry(4.15, 0.11, 0.11), mats.darkTimber);
-    frontBeam.position.set(0, 2.52, 1.06);
+    // Wooden ridge beam, front eave beam & back eave beam
+    const ridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(4.26, 0.12, 0.12), mats.darkTimber);
+    ridgeBeam.position.set(0, yRidge - 0.04, zRidge);
+    const frontBeam = new THREE.Mesh(new THREE.BoxGeometry(4.15, 0.10, 0.10), mats.darkTimber);
+    frontBeam.position.set(0, yFrontEave + 0.04, 1.04);
     sg.add(ridgeBeam, frontBeam);
 
-    // Pitched dual-slope medieval striped fabric awning
-    const frontSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.08, 2.05), canopyMat);
-    frontSlope.position.set(0, 2.81, 0.52);
-    frontSlope.rotation.x = 0.25;
+    // Dual-slope striped awning (zero intersection, exact ridge meeting!)
+    const frontSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.06, frontLen), canopyMat);
+    frontSlope.position.set(0, (yRidge + yFrontEave) * 0.5, (zRidge + zFrontEave) * 0.5);
+    frontSlope.rotation.x = frontAngle;
     frontSlope.castShadow = true;
-    const backSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.08, 1.28), canopyMat);
-    backSlope.position.set(0, 2.93, -0.82);
-    backSlope.rotation.x = -0.22;
-    backSlope.castShadow = true;
-    sg.add(frontSlope, backSlope);
+    frontSlope.receiveShadow = true;
 
-    // Scalloped alternating valance tabs along front & side eaves
+    const backSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.06, backLen), canopyMat);
+    backSlope.position.set(0, (yRidge + yBackEave) * 0.5, (zRidge + zBackEave) * 0.5);
+    backSlope.rotation.x = -backAngle;
+    backSlope.castShadow = true;
+    backSlope.receiveShadow = true;
+
+    // Fabric ridge cap strip sealing the crest cleanly
+    const ridgeCap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.068, 0.068, 4.40, 10),
+      trimMat,
+    );
+    ridgeCap.rotation.z = Math.PI / 2;
+    ridgeCap.position.set(0, yRidge + 0.015, zRidge);
+
+    sg.add(frontSlope, backSlope, ridgeCap);
+
+    // Side fabric triangular valance flaps sealing the gables
+    const sideGableShape = new THREE.Shape();
+    sideGableShape.moveTo(zBackEave, yBackEave - 0.02);
+    sideGableShape.lineTo(zRidge, yRidge - 0.02);
+    sideGableShape.lineTo(zFrontEave, yFrontEave - 0.02);
+    sideGableShape.lineTo(zFrontEave, yFrontEave - 0.22);
+    sideGableShape.lineTo(zBackEave, yBackEave - 0.22);
+    sideGableShape.closePath();
+    const sideGableGeo = new THREE.ExtrudeGeometry(sideGableShape, {
+      depth: 0.05,
+      bevelEnabled: false,
+    });
+    sideGableGeo.rotateY(Math.PI / 2);
+    for (const sx of [-2.16, 2.11]) {
+      const sideFlap = new THREE.Mesh(sideGableGeo, solidCanopyMat);
+      sideFlap.position.x = sx;
+      sg.add(sideFlap);
+    }
+
+    // Scalloped alternating valance tabs aligned flush beneath the front eave
     const tabCount = 9;
     const tabW = 4.32 / tabCount;
     for (let t = 0; t < tabCount; t++) {
       const tx = -2.16 + (t + 0.5) * tabW;
       const tab = new THREE.Mesh(
-        new THREE.CylinderGeometry(tabW * 0.48, tabW * 0.48, 0.07, 10),
+        new THREE.CylinderGeometry(tabW * 0.48, tabW * 0.48, 0.06, 10),
         t % 2 === 0 ? solidCanopyMat : trimMat,
       );
       tab.rotation.x = Math.PI / 2;
-      tab.position.set(tx, 2.48, 1.44);
+      tab.position.set(tx, yFrontEave - 0.16, zFrontEave - 0.03);
       sg.add(tab);
+
       const topFill = new THREE.Mesh(
-        new THREE.BoxGeometry(tabW * 0.96, 0.2, 0.07),
+        new THREE.BoxGeometry(tabW * 0.96, 0.17, 0.06),
         t % 2 === 0 ? solidCanopyMat : trimMat,
       );
-      topFill.position.set(tx, 2.56, 1.44);
+      topFill.position.set(tx, yFrontEave - 0.075, zFrontEave - 0.03);
       sg.add(topFill);
     }
 
-    // Hanging stall lantern on right front post
-    const stallLantern = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), mats.lanternGlow);
-    stallLantern.position.set(1.75, 2.22, 1.12);
-    sg.add(stallLantern);
+    // Hanging wrought-iron stall lantern on right front post
+    const hook = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.26), mats.wroughtIron);
+    hook.position.set(1.75, 2.34, 1.12);
+    const stallLantern = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), mats.lanternGlow);
+    stallLantern.position.set(1.75, 2.18, 1.22);
+    sg.add(hook, stallLantern);
 
     // Oak display counter + backboard shelf
     const counter = new THREE.Mesh(new THREE.BoxGeometry(3.85, 0.92, 1.15), mats.oakWood);
     counter.position.set(0, 0.46, 0.25);
     counter.castShadow = true;
+    counter.receiveShadow = true;
     const backboard = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.85, 0.14), mats.darkTimber);
     backboard.position.set(0, 1.45, -0.98);
     sg.add(counter, backboard);
@@ -1392,29 +1503,121 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
     sideBarrel.castShadow = true;
     sg.add(sideBarrel);
 
-    for (let i = -2; i <= 2; i++) {
-      if (stall.goods === 'potions') {
-        const flask = new THREE.Mesh(
-          new THREE.SphereGeometry(0.16, 12, 10),
-          i % 2 === 0 ? solidCanopyMat : mats.waterFountain,
-        );
-        flask.position.set(i * 0.62, 1.06, 0.25);
-        sg.add(flask);
-      } else if (stall.goods === 'fabrics') {
-        const roll = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.16, 0.16, 0.82, 12),
-          i % 2 === 0 ? solidCanopyMat : trimMat,
-        );
-        roll.rotation.z = Math.PI / 2;
-        roll.position.set(i * 0.66, 1.05, 0.25);
-        sg.add(roll);
-      } else {
-        const crate = new THREE.Mesh(
-          new THREE.BoxGeometry(0.46, 0.36, 0.46),
-          mats.oakWood,
-        );
-        crate.position.set(i * 0.65, 1.1, 0.25);
-        sg.add(crate);
+    // Populate goods per stall category (including lush 3D Fruit & Orchard Stalls)
+    if (stall.goods === 'fruits') {
+      addWickerBasket(sg, -1.32, 0.92, 0.22, 0.34, 0.26, 0.22, mats.appleRedMat, 0.08, 8);
+      addWickerBasket(sg, -0.46, 0.92, 0.26, 0.34, 0.26, 0.22, mats.orangeMat, 0.082, 8);
+      addWickerBasket(sg, 0.44, 0.92, 0.22, 0.34, 0.26, 0.22, mats.appleGreenMat, 0.08, 8);
+      addWickerBasket(sg, 1.30, 0.92, 0.26, 0.34, 0.26, 0.22, mats.pearMat, 0.082, 7);
+
+      // Front ground display crate with striped watermelons & golden oranges
+      const groundCrate = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.32, 0.62), mats.oakWood);
+      groundCrate.position.set(-0.85, 0.16, 1.15);
+      groundCrate.castShadow = true;
+      sg.add(groundCrate);
+      for (const mx of [-1.18, -0.82, -0.46]) {
+        const melon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10), mats.watermelonMat);
+        melon.scale.set(1.22, 0.92, 0.92);
+        melon.position.set(mx, 0.42, 1.15);
+        melon.castShadow = true;
+        sg.add(melon);
+      }
+      addWickerBasket(sg, 0.95, 0.0, 1.12, 0.36, 0.28, 0.32, mats.orangeMat, 0.095, 7);
+    } else if (stall.goods === 'orchard') {
+      // Slanted display trays with grapes, pears, apples + brass merchant scale
+      for (let idx = -2; idx <= 2; idx++) {
+        const tray = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.10, 0.64), mats.oakWood);
+        tray.position.set(idx * 0.72, 0.98, 0.24);
+        tray.rotation.x = 0.22;
+        sg.add(tray);
+        const fMat =
+          idx === -2
+            ? mats.grapeMat
+            : idx === -1
+              ? mats.appleRedMat
+              : idx === 0
+                ? mats.pearMat
+                : idx === 1
+                  ? mats.orangeMat
+                  : mats.appleGreenMat;
+        for (let b = 0; b < 6; b++) {
+          const ang = (b / 6) * Math.PI * 2;
+          const orb = new THREE.Mesh(new THREE.SphereGeometry(0.078, 9, 8), fMat);
+          orb.position.set(
+            idx * 0.72 + Math.cos(ang) * 0.14,
+            1.08 + (b % 2) * 0.05,
+            0.24 + Math.sin(ang) * 0.14,
+          );
+          sg.add(orb);
+        }
+      }
+      // Hanging grape clusters along front eave beam
+      for (const gx of [-1.25, -0.4, 0.45, 1.25]) {
+        for (let row = 0; row < 3; row++) {
+          const grape = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 7), mats.grapeMat);
+          grape.position.set(gx + (row % 2) * 0.04, 2.30 - row * 0.08, 1.02);
+          sg.add(grape);
+        }
+      }
+      addWickerBasket(sg, 1.05, 0.0, 1.12, 0.38, 0.28, 0.30, mats.appleRedMat, 0.09, 8);
+    } else if (stall.goods === 'berries') {
+      addWickerBasket(sg, -1.28, 0.92, 0.24, 0.30, 0.22, 0.20, mats.grapeMat, 0.068, 9);
+      addWickerBasket(sg, -0.42, 0.92, 0.24, 0.30, 0.22, 0.20, mats.appleRedMat, 0.068, 9);
+      addWickerBasket(sg, 0.44, 0.92, 0.24, 0.30, 0.22, 0.20, mats.orangeMat, 0.072, 8);
+      // Brass balance scale on counter
+      const scalePost = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.032, 0.44, 8), mats.goldTrim);
+      scalePost.position.set(1.28, 1.14, 0.25);
+      const scaleBeam = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.025), mats.goldTrim);
+      scaleBeam.position.set(1.28, 1.34, 0.25);
+      sg.add(scalePost, scaleBeam);
+      // Ground harvest pumpkins & apple basket
+      for (const [px, pz, pr] of [
+        [-1.05, 1.12, 0.22],
+        [-0.55, 1.16, 0.18],
+      ]) {
+        const pumpkin = new THREE.Mesh(new THREE.SphereGeometry(pr, 12, 10), mats.pumpkinMat);
+        pumpkin.scale.set(1.15, 0.82, 1.15);
+        pumpkin.position.set(px, pr * 0.8, pz);
+        pumpkin.castShadow = true;
+        sg.add(pumpkin);
+      }
+      addWickerBasket(sg, 0.85, 0.0, 1.12, 0.34, 0.26, 0.28, mats.pearMat, 0.088, 7);
+    } else if (stall.goods === 'produce') {
+      addWickerBasket(sg, -1.25, 0.92, 0.25, 0.32, 0.24, 0.20, mats.appleRedMat, 0.078, 7);
+      addWickerBasket(sg, 0.0, 0.92, 0.25, 0.34, 0.25, 0.22, mats.orangeMat, 0.082, 7);
+      addWickerBasket(sg, 1.25, 0.92, 0.25, 0.32, 0.24, 0.20, mats.pearMat, 0.078, 7);
+      const melon = new THREE.Mesh(new THREE.SphereGeometry(0.20, 12, 10), mats.watermelonMat);
+      melon.scale.set(1.25, 0.9, 0.9);
+      melon.position.set(-0.62, 1.10, 0.28);
+      const pumpkin = new THREE.Mesh(new THREE.SphereGeometry(0.20, 12, 10), mats.pumpkinMat);
+      pumpkin.scale.set(1.18, 0.82, 1.18);
+      pumpkin.position.set(0.65, 1.08, 0.28);
+      sg.add(melon, pumpkin);
+    } else {
+      for (let i = -2; i <= 2; i++) {
+        if (stall.goods === 'potions') {
+          const flask = new THREE.Mesh(
+            new THREE.SphereGeometry(0.16, 12, 10),
+            i % 2 === 0 ? solidCanopyMat : mats.waterFountain,
+          );
+          flask.position.set(i * 0.62, 1.06, 0.25);
+          sg.add(flask);
+        } else if (stall.goods === 'fabrics') {
+          const roll = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.16, 0.16, 0.82, 12),
+            i % 2 === 0 ? solidCanopyMat : trimMat,
+          );
+          roll.rotation.z = Math.PI / 2;
+          roll.position.set(i * 0.66, 1.05, 0.25);
+          sg.add(roll);
+        } else {
+          const crate = new THREE.Mesh(
+            new THREE.BoxGeometry(0.46, 0.36, 0.46),
+            mats.oakWood,
+          );
+          crate.position.set(i * 0.65, 1.1, 0.25);
+          sg.add(crate);
+        }
       }
     }
 
@@ -1582,6 +1785,7 @@ export function buildInstancedNatureAndLanterns(
 ): {
   group: THREE.Group;
   lanternLights: THREE.PointLight[];
+  lanternHubs: [number, number, number][];
   lanternHalos: THREE.Sprite[];
 } {
   const group = new THREE.Group();
@@ -1862,21 +2066,24 @@ export function buildInstancedNatureAndLanterns(
 
   group.add(boxwoodInst, flowerShrubInst, blossomInst, fernInst);
 
-  // 3. Ornate Wrought-Iron Street Lanterns + Volumetric Glow Halos
-  const postGeo = new THREE.CylinderGeometry(0.085, 0.16, 3.65, 10);
-  postGeo.translate(0, 1.825, 0);
-  const collarGeo = new THREE.CylinderGeometry(0.22, 0.24, 0.2, 8);
-  collarGeo.translate(0, 3.45, 0);
-  const capGeo = new THREE.ConeGeometry(0.45, 0.42, 6);
+  // 3. Ornate Wrought-Iron Street Lanterns with Cage Bars & Soft Atmospheric Glow
+  const postGeo = new THREE.CylinderGeometry(0.085, 0.16, 3.55, 12);
+  postGeo.translate(0, 1.775, 0);
+  const collarGeo = new THREE.CylinderGeometry(0.22, 0.24, 0.18, 8);
+  collarGeo.translate(0, 3.44, 0);
+  const capGeo = new THREE.ConeGeometry(0.44, 0.40, 6);
   capGeo.translate(0, 4.18, 0);
-  const globeGeo = new THREE.SphereGeometry(0.25, 12, 10);
+  const globeGeo = new THREE.SphereGeometry(0.20, 12, 10);
   globeGeo.translate(0, 3.76, 0);
+  const cageBarGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.56, 6);
+  cageBarGeo.translate(0, 3.74, 0);
 
   const lCount = LANTERNS.length;
   const postInst = new THREE.InstancedMesh(postGeo, mats.wroughtIron, lCount);
   const collarInst = new THREE.InstancedMesh(collarGeo, mats.wroughtIron, lCount);
   const capInst = new THREE.InstancedMesh(capGeo, mats.wroughtIron, lCount);
   const globeInst = new THREE.InstancedMesh(globeGeo, mats.lanternGlow, lCount);
+  const cageInst = new THREE.InstancedMesh(cageBarGeo, mats.wroughtIron, lCount * 4);
 
   postInst.castShadow = true;
 
@@ -1891,47 +2098,166 @@ export function buildInstancedNatureAndLanterns(
     capInst.setMatrixAt(i, dummy.matrix);
     globeInst.setMatrixAt(i, dummy.matrix);
 
-    // Volumetric soft amber lantern halo sprite
+    // 4 wrought-iron protective cage bars around each lantern globe
+    for (let k = 0; k < 4; k++) {
+      const ang = (k / 4) * Math.PI * 2 + Math.PI * 0.25;
+      dummy.position.set(l.x + Math.cos(ang) * 0.22, 0, l.z + Math.sin(ang) * 0.22);
+      dummy.updateMatrix();
+      cageInst.setMatrixAt(i * 4 + k, dummy.matrix);
+    }
+
+    // Subtle Gaussian mist aura (no harsh ring edge)
     const haloMat = new THREE.SpriteMaterial({
       map: mats.haloGlowTex,
-      color: 0xffbc5a,
+      color: 0xffb352,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.08,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const halo = new THREE.Sprite(haloMat);
     halo.position.set(l.x, 3.76, l.z);
     halo.scale.set(3.4, 3.4, 1);
-    group.add(halo);
+
+    // Soft cobble ground warm light pool (MeshBasicMaterial, synced with halo opacity)
+    const poolMat = new THREE.MeshBasicMaterial({
+      map: mats.haloGlowTex,
+      color: 0xffa642,
+      transparent: true,
+      opacity: 0.04,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const groundPool = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 7.5), poolMat);
+    groundPool.rotation.x = -Math.PI / 2;
+    groundPool.position.set(l.x, 0.045, l.z);
+    halo.userData.poolMat = poolMat;
+    group.add(halo, groundPool);
     lanternHalos.push(halo);
   }
   postInst.instanceMatrix.needsUpdate = true;
   collarInst.instanceMatrix.needsUpdate = true;
   capInst.instanceMatrix.needsUpdate = true;
   globeInst.instanceMatrix.needsUpdate = true;
+  cageInst.instanceMatrix.needsUpdate = true;
   postInst.computeBoundingSphere();
   collarInst.computeBoundingSphere();
   capInst.computeBoundingSphere();
   globeInst.computeBoundingSphere();
+  cageInst.computeBoundingSphere();
 
-  group.add(postInst, collarInst, capInst, globeInst);
+  group.add(postInst, collarInst, capInst, globeInst, cageInst);
 
-  // 6 Dynamic Warm PointLights (Central Plaza, Tavern, Market, Cathedral, Forge Hearth)
+  // 10 Warm Street & Plaza light hubs served by 3 pooled dynamic PointLights (keeps WebGL shader loop fast)
   const warmHubs: [number, number, number][] = [
-    [-10, 4.2, 10],
-    [10, 4.2, -10],
-    [22, 4.2, 26],
-    [-22, 4.2, 20],
-    [52, 4.5, -42],
+    [-10, 4.1, 10],
+    [10, 4.1, -10],
+    [-12, 4.1, -12],
+    [12, 4.1, 12],
+    [-22, 4.1, 20],
+    [22, 4.1, 22],
+    [0, 4.1, 46],
+    [0, 4.1, 74],
+    [48, 4.3, -40],
     [-25, 2.2, -27], // Blacksmith forge ember glow!
   ];
-  for (const [lx, ly, lz] of warmHubs) {
-    const pl = new THREE.PointLight(0xffb154, 0.0, 28, 1.5);
+  for (let i = 0; i < 3; i++) {
+    const [lx, ly, lz] = warmHubs[i];
+    const pl = new THREE.PointLight(0xffb154, 0.0, 28, 1.4);
     pl.position.set(lx, ly, lz);
     group.add(pl);
     lanternLights.push(pl);
   }
 
-  return { group, lanternLights, lanternHalos };
+  return { group, lanternLights, lanternHubs: warmHubs, lanternHalos };
+}
+
+export interface PortalVisual {
+  spec: PortalSpec;
+  group: THREE.Group;
+  vortexDisc: THREE.Mesh;
+  runeRing: THREE.Mesh;
+}
+
+/**
+ * Builds glowing stone rune warp portal archways shared by Prontera Gate exits and all Field Maps.
+ */
+export function buildPortalArchways(
+  portals: PortalSpec[],
+  mats: PronteraMaterials,
+  heightLookup: (x: number, z: number) => number,
+): { group: THREE.Group; portals: PortalVisual[] } {
+  const group = new THREE.Group();
+  const portalVisuals: PortalVisual[] = [];
+
+  for (const spec of portals) {
+    const py = heightLookup(spec.x, spec.z);
+    const pg = new THREE.Group();
+    pg.position.set(spec.x, py, spec.z);
+    pg.rotation.y = spec.rotY;
+
+    // Carved stone base plinth + two monolithic rune pillars + arch lintel
+    const plinth = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.65, 2.95, 0.24, 24),
+      mats.castleWall,
+    );
+    plinth.position.y = 0.12;
+    plinth.receiveShadow = true;
+    pg.add(plinth);
+
+    for (const sx of [-2.15, 2.15]) {
+      const col = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.32, 0.42, 4.2, 12),
+        mats.castleWall,
+      );
+      col.position.set(sx, 2.2, 0);
+      col.castShadow = true;
+      const cap = new THREE.Mesh(
+        new THREE.ConeGeometry(0.46, 0.65, 6),
+        mats.marbleTrim,
+      );
+      cap.position.set(sx, 4.55, 0);
+      pg.add(col, cap);
+    }
+
+    const arch = new THREE.Mesh(
+      new THREE.TorusGeometry(2.15, 0.26, 10, 24, Math.PI),
+      mats.castleWall,
+    );
+    arch.position.set(0, 4.1, 0);
+    arch.castShadow = true;
+    pg.add(arch);
+
+    // Translucent swirling warp vortex curtain
+    const vortexMat = new THREE.MeshBasicMaterial({
+      color: spec.color,
+      transparent: true,
+      opacity: 0.44,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const vortexDisc = new THREE.Mesh(new THREE.CircleGeometry(1.68, 28), vortexMat);
+    vortexDisc.position.set(0, 2.24, 0);
+    pg.add(vortexDisc);
+
+    // Floating rotating rune ring on the ground
+    const runeMat = new THREE.MeshBasicMaterial({
+      color: spec.color,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const runeRing = new THREE.Mesh(new THREE.RingGeometry(1.75, 2.35, 32), runeMat);
+    runeRing.rotation.x = -Math.PI / 2;
+    runeRing.position.y = 0.27;
+    pg.add(runeRing);
+
+    group.add(pg);
+    portalVisuals.push({ spec, group: pg, vortexDisc, runeRing });
+  }
+
+  return { group, portals: portalVisuals };
 }

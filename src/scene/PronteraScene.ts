@@ -12,19 +12,29 @@ import {
   expForNextLevel,
   findNearestAliveMob,
 } from '../world/combat';
-import { PRONTERA_NAV, Point2D } from '../world/pathfinding';
+import {
+  PRONTERA_PORTALS,
+  ZoneId,
+  createZoneNavGrid,
+  getZoneDefaultSpawn,
+  getZoneDistrictAt,
+  getZoneLandmarks,
+  getZoneName,
+  zoneHeightAt,
+} from '../world/fieldMaps';
+import { NavigationGrid, PRONTERA_NAV, Point2D } from '../world/pathfinding';
 import {
   LANDMARKS,
   NPCS,
   PLAYER_SPAWN,
-  getDistrictAt,
-  groundHeightAt,
   isCobbleRoad,
 } from '../world/pronteraLayout';
 import {
+  PortalVisual,
   buildCentralFountain,
   buildCitadelWallsAndGates,
   buildInstancedNatureAndLanterns,
+  buildPortalArchways,
   buildPronteraBuildings,
   buildTerrainAndRoads,
 } from './architectureBuilder';
@@ -36,6 +46,7 @@ import {
   buildHeroCharacter,
   buildNpcCharacter,
 } from './characterBuilder';
+import { BuiltFieldZone, buildFieldZoneScene } from './fieldMapBuilder';
 import { createPronteraMaterials } from './materials';
 import {
   createDiabloEnvironmentRig,
@@ -47,7 +58,7 @@ import { WeatherMode, createWeatherSystem } from './weatherSystem';
 
 export type TimeOfDay = 'day' | 'sunset' | 'evening';
 export type CameraPreset = 'classic' | 'wide' | 'close';
-export type { WeatherMode };
+export type { WeatherMode, ZoneId };
 
 export interface CombatPopup {
   id: number;
@@ -67,6 +78,8 @@ export interface TargetMobSnapshot {
 }
 
 export interface HudSnapshot {
+  zoneId: ZoneId;
+  zoneName: string;
   x: number;
   z: number;
   yaw: number;
@@ -90,6 +103,7 @@ export interface PronteraController {
   setCameraPreset: (preset: CameraPreset) => void;
   resetCameraNorth: () => void;
   teleportToLandmark: (landmarkId: string) => void;
+  warpToZone: (zoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => void;
   walkToWorldPoint: (x: number, z: number) => void;
   attackNearest: () => void;
   toggleMute: () => boolean;
@@ -110,6 +124,9 @@ const _lightningTint = new THREE.Color(0xd2e6ff);
 const _sunDirScratch = new THREE.Vector3();
 
 export function detectSoftwareWebGL(): boolean {
+  if (typeof navigator !== 'undefined' && /HeadlessChrome/i.test(navigator.userAgent)) {
+    return true;
+  }
   const probe = document.createElement('canvas');
   const gl = probe.getContext('webgl2') || probe.getContext('webgl');
   if (!gl) return true;
@@ -156,7 +173,7 @@ export function mountPronteraScene(
   scene.environment = diabloEnvRig.getTexture('day');
   scene.environmentIntensity = 0.48;
 
-  const camera = new THREE.PerspectiveCamera(40, initW / initH, 0.5, 420);
+  const camera = new THREE.PerspectiveCamera(40, initW / initH, 0.5, 760);
 
   // Three-Point Atmospheric Lighting Rig
   const hemiLight = new THREE.HemisphereLight(0x88bef0, 0x261f18, 0.36);
@@ -167,8 +184,8 @@ export function mountPronteraScene(
   sunLight.castShadow = !isSoftwareGl;
   sunLight.shadow.mapSize.set(2048, 2048);
   sunLight.shadow.camera.near = 8;
-  sunLight.shadow.camera.far = 185;
-  const shadowHalf = 42;
+  sunLight.shadow.camera.far = 195;
+  const shadowHalf = 46;
   sunLight.shadow.camera.left = -shadowHalf;
   sunLight.shadow.camera.right = shadowHalf;
   sunLight.shadow.camera.top = shadowHalf;
@@ -186,32 +203,73 @@ export function mountPronteraScene(
   const weatherUniforms = createWeatherUniforms();
   const pbrUniforms = createPbrUniforms();
 
-  // Build World Geometry & PBR Materials
+  // Build Prontera Capital World Group (kept cached for instant return from fields)
   const mats = createPronteraMaterials(renderer, isSoftwareGl, weatherUniforms);
-  const { group: terrainGroup, groundPickMesh, moatWaterMeshes } = buildTerrainAndRoads(mats);
-  scene.add(terrainGroup);
+  const pronteraGroup = new THREE.Group();
+
+  const {
+    group: terrainGroup,
+    groundPickMesh: pronteraGroundPick,
+    moatWaterMeshes: pronteraMoatWater,
+  } = buildTerrainAndRoads(mats);
+  pronteraGroup.add(terrainGroup);
 
   const { group: fountainGroup, waterMesh: fountainWater, sprayGroup } = buildCentralFountain(mats);
-  scene.add(fountainGroup);
+  pronteraGroup.add(fountainGroup);
 
   const wallsGroup = buildCitadelWallsAndGates(mats);
-  scene.add(wallsGroup);
+  pronteraGroup.add(wallsGroup);
 
   const buildingsGroup = buildPronteraBuildings(mats);
-  scene.add(buildingsGroup);
+  pronteraGroup.add(buildingsGroup);
 
-  const { group: natureGroup, lanternLights, lanternHalos } = buildInstancedNatureAndLanterns(mats);
-  scene.add(natureGroup);
+  const {
+    group: natureGroup,
+    lanternLights: pronteraLanternLights,
+    lanternHubs: pronteraLanternHubs,
+    lanternHalos: pronteraLanternHalos,
+  } = buildInstancedNatureAndLanterns(mats);
+  pronteraGroup.add(natureGroup);
+
+  const portalBeaconLight = new THREE.PointLight(0x72e6ff, 1.5, 18, 1.5);
+  portalBeaconLight.position.set(0, 2.6, 86);
+  scene.add(portalBeaconLight);
 
   const npcGroup = new THREE.Group();
   for (const npc of NPCS) {
     npcGroup.add(buildNpcCharacter(npc, mats));
   }
-  scene.add(npcGroup);
+  pronteraGroup.add(npcGroup);
 
-  const { group: mobGroup, actors: mobActors, hitTargets: mobHitTargets } = buildFieldMobs(mats);
-  scene.add(mobGroup);
-  const mobById = new Map<string, MobActor>(mobActors.map((m) => [m.id, m]));
+  const pronteraPortalsBuilt = buildPortalArchways(
+    PRONTERA_PORTALS,
+    mats,
+    (px, pz) => zoneHeightAt('prontera', px, pz),
+  );
+  pronteraGroup.add(pronteraPortalsBuilt.group);
+
+  const {
+    group: pronteraMobGroup,
+    actors: pronteraMobActors,
+    hitTargets: pronteraMobHitTargets,
+  } = buildFieldMobs(mats, 'prontera');
+  pronteraGroup.add(pronteraMobGroup);
+  const pronteraMobById = new Map<string, MobActor>(pronteraMobActors.map((m) => [m.id, m]));
+
+  scene.add(pronteraGroup);
+
+  // Active Zone Dynamic References (swapped cleanly when walking through Portals)
+  let activeZoneId: ZoneId = 'prontera';
+  let activeFieldZone: BuiltFieldZone | null = null;
+  let activeNav: NavigationGrid = PRONTERA_NAV;
+  let activeGroundPickMesh: THREE.Mesh = pronteraGroundPick;
+  let activeWaterMeshes: THREE.Mesh[] = pronteraMoatWater;
+  let activePortals: PortalVisual[] = pronteraPortalsBuilt.portals;
+  let activeMobActors: MobActor[] = pronteraMobActors;
+  let activeMobHitTargets: THREE.Mesh[] = pronteraMobHitTargets;
+  let activeMobById: Map<string, MobActor> = pronteraMobById;
+  let activeLanternLights: THREE.PointLight[] = pronteraLanternLights;
+  let activeLanternHalos: THREE.Sprite[] = pronteraLanternHalos;
 
   const hero = buildHeroCharacter(mats);
   hero.root.position.set(PLAYER_SPAWN.x, 0, PLAYER_SPAWN.z);
@@ -242,9 +300,9 @@ export function mountPronteraScene(
     composer.addPass(new RenderPass(scene, camera));
     bloomPass = new UnrealBloomPass(
       new THREE.Vector2(initW, initH),
-      0.28,
-      0.50,
-      0.82,
+      0.24,
+      0.46,
+      0.85,
     );
     composer.addPass(bloomPass);
     composer.addPass(new OutputPass());
@@ -294,6 +352,7 @@ export function mountPronteraScene(
 
   let activePath: Point2D[] = [];
   let cursorRingLife = 0;
+  let portalCooldown = 0;
 
   let targetCamYaw = 0;
   let camYaw = 0;
@@ -363,7 +422,7 @@ export function mountPronteraScene(
       mob.knockVx = (dx / dist) * push;
       mob.knockVz = (dz / dist) * push;
 
-      const py = groundHeightAt(mob.x, mob.z);
+      const py = zoneHeightAt(activeZoneId, mob.x, mob.z);
       spawnPopup(
         isCrit ? `CRIT -${result.damage}!` : `-${result.damage}`,
         isCrit ? 'crit' : 'hit',
@@ -392,7 +451,7 @@ export function mountPronteraScene(
             `LEVEL UP! Lv.${playerLevel}`,
             'levelup',
             playerX,
-            groundHeightAt(playerX, playerZ) + 2.3,
+            zoneHeightAt(activeZoneId, playerX, playerZ) + 2.3,
             playerZ,
           );
         }
@@ -407,23 +466,22 @@ export function mountPronteraScene(
 
   const triggerMeleeAttack = () => {
     if (!isPlaying || attackCooldown > 0) return;
-    let target: MobActor | null = targetMobId ? mobById.get(targetMobId) ?? null : null;
+    let target: MobActor | null = targetMobId ? activeMobById.get(targetMobId) ?? null : null;
     if (
       !target ||
       !target.alive ||
       Math.hypot(target.x - playerX, target.z - playerZ) > SWORDSMAN_MELEE_RANGE + 1.4
     ) {
-      target = findNearestAliveMob(mobActors, playerX, playerZ, SWORDSMAN_MELEE_RANGE + 1.4);
+      target = findNearestAliveMob(activeMobActors, playerX, playerZ, SWORDSMAN_MELEE_RANGE + 1.4);
     }
     if (target) {
       targetMobId = target.id;
       const dist = Math.hypot(target.x - playerX, target.z - playerZ);
       if (dist > SWORDSMAN_MELEE_RANGE) {
-        // Short lunge step closer to connect cleanly
         const step = Math.min(dist - 1.35, 1.3);
         const vx = (target.x - playerX) / Math.max(0.01, dist);
         const vz = (target.z - playerZ) / Math.max(0.01, dist);
-        const res = PRONTERA_NAV.resolveCollision(playerX + vx * step, playerZ + vz * step, 0.58);
+        const res = activeNav.resolveCollision(playerX + vx * step, playerZ + vz * step, 0.58, playerX, playerZ);
         playerX = res.x;
         playerZ = res.z;
       }
@@ -457,10 +515,10 @@ export function mountPronteraScene(
     _raycaster.setFromCamera(_pointerNdc, camera);
 
     if (allowMobTarget) {
-      const mobHits = _raycaster.intersectObjects(mobHitTargets, false);
+      const mobHits = _raycaster.intersectObjects(activeMobHitTargets, false);
       for (const hit of mobHits) {
         const mobId = hit.object.userData?.mobId as string | undefined;
-        const mob = mobId ? mobById.get(mobId) : undefined;
+        const mob = mobId ? activeMobById.get(mobId) : undefined;
         if (mob && mob.alive) {
           targetMobId = mob.id;
           const dist = Math.hypot(mob.x - playerX, mob.z - playerZ);
@@ -471,10 +529,10 @@ export function mountPronteraScene(
             performSwordSwing(mob);
           } else {
             pendingAttackMobId = mob.id;
-            const path = PRONTERA_NAV.findPath(playerX, playerZ, mob.x, mob.z);
+            const path = activeNav.findPath(playerX, playerZ, mob.x, mob.z);
             if (path.length > 0) {
               activePath = path;
-              cursorRingMesh.position.set(mob.x, groundHeightAt(mob.x, mob.z) + 0.065, mob.z);
+              cursorRingMesh.position.set(mob.x, zoneHeightAt(activeZoneId, mob.x, mob.z) + 0.065, mob.z);
               cursorRingMesh.visible = true;
               cursorRingLife = 1.2;
               if (playChime) audio.playMoveClick();
@@ -486,14 +544,14 @@ export function mountPronteraScene(
     }
 
     pendingAttackMobId = null;
-    const hits = _raycaster.intersectObject(groundPickMesh, false);
+    const hits = _raycaster.intersectObject(activeGroundPickMesh, false);
     if (hits.length > 0) {
       const pt = hits[0].point;
-      const path = PRONTERA_NAV.findPath(playerX, playerZ, pt.x, pt.z);
+      const path = activeNav.findPath(playerX, playerZ, pt.x, pt.z);
       if (path.length > 0) {
         activePath = path;
         const dest = path[path.length - 1];
-        cursorRingMesh.position.set(dest.x, groundHeightAt(dest.x, dest.z) + 0.065, dest.z);
+        cursorRingMesh.position.set(dest.x, zoneHeightAt(activeZoneId, dest.x, dest.z) + 0.065, dest.z);
         cursorRingMesh.visible = true;
         cursorRingLife = 1.4;
         if (playChime) audio.playMoveClick();
@@ -600,7 +658,7 @@ export function mountPronteraScene(
   });
   resizeObserver.observe(container);
 
-  // Calibrated Atmospheric Lighting & Weather Targets (Crisp Snow Visibility!)
+  // Calibrated Atmospheric Lighting & Weather Targets (Rich contrast without harsh lantern rings)
   const getLightingTargets = (mode: TimeOfDay, weather: WeatherMode) => {
     let base = {
       sky: 0x6296c6,
@@ -615,9 +673,9 @@ export function mountPronteraScene(
       envInt: 0.48,
       fogDensity: 0.0044,
       emissiveWin: 0.55,
-      emissiveLantern: 0.95,
-      lanternPointInt: 0.7,
-      haloOpacity: 0.16,
+      emissiveLantern: 0.90,
+      lanternPointInt: 0.5,
+      haloOpacity: 0.02,
     };
 
     if (mode === 'sunset') {
@@ -634,9 +692,9 @@ export function mountPronteraScene(
         envInt: 0.46,
         fogDensity: 0.0052,
         emissiveWin: 1.45,
-        emissiveLantern: 1.85,
-        lanternPointInt: 3.8,
-        haloOpacity: 0.50,
+        emissiveLantern: 1.65,
+        lanternPointInt: 4.5,
+        haloOpacity: 0.14,
       };
     } else if (mode === 'evening') {
       base = {
@@ -650,12 +708,16 @@ export function mountPronteraScene(
         hemiGround: 0x161922,
         hemiInt: 0.44,
         envInt: 0.50,
-        fogDensity: 0.0058,
-        emissiveWin: 2.25,
-        emissiveLantern: 2.85,
-        lanternPointInt: 6.8,
-        haloOpacity: 0.82,
+        fogDensity: 0.0056,
+        emissiveWin: 2.15,
+        emissiveLantern: 2.35,
+        lanternPointInt: 8.6,
+        haloOpacity: 0.22,
       };
+    }
+
+    if (activeZoneId !== 'prontera') {
+      base.fogDensity *= 0.65;
     }
 
     if (weather === 'rain') {
@@ -663,22 +725,21 @@ export function mountPronteraScene(
       base.sunInt *= 0.42;
       base.hemiSky = mode === 'evening' ? 0x1d2b45 : 0x4f647a;
       base.hemiInt *= 0.78;
-      base.fogDensity += 0.0024;
+      base.fogDensity += 0.0022;
       base.emissiveWin = Math.max(base.emissiveWin, 1.55);
-      base.emissiveLantern = Math.max(base.emissiveLantern, 2.05);
-      base.lanternPointInt = Math.max(base.lanternPointInt, 4.4);
-      base.haloOpacity = Math.max(base.haloOpacity, 0.58);
+      base.emissiveLantern = Math.max(base.emissiveLantern, 1.85);
+      base.lanternPointInt = Math.max(base.lanternPointInt, 5.2);
+      base.haloOpacity = Math.max(base.haloOpacity, 0.16);
       base.envInt *= 0.82;
     } else if (weather === 'snow') {
-      // Crisp, clear winter air — keep fog low so buildings, roads, moat and fields remain sharply legible
       base.sky = mode === 'evening' ? 0x101c33 : mode === 'sunset' ? 0x8c787c : 0x6f8fb0;
       base.sunInt *= 0.90;
       base.hemiSky = mode === 'evening' ? 0x364d78 : 0xaac4de;
-      base.fogDensity = mode === 'evening' ? 0.0036 : mode === 'sunset' ? 0.0028 : 0.0022;
+      base.fogDensity = mode === 'evening' ? 0.0034 : mode === 'sunset' ? 0.0026 : 0.0020;
       base.emissiveWin = Math.max(base.emissiveWin, 1.35);
-      base.emissiveLantern = Math.max(base.emissiveLantern, 1.8);
-      base.lanternPointInt = Math.max(base.lanternPointInt, 3.2);
-      base.haloOpacity = Math.max(base.haloOpacity, 0.44);
+      base.emissiveLantern = Math.max(base.emissiveLantern, 1.65);
+      base.lanternPointInt = Math.max(base.lanternPointInt, 4.0);
+      base.haloOpacity = Math.max(base.haloOpacity, 0.14);
     }
 
     return base;
@@ -689,7 +750,7 @@ export function mountPronteraScene(
   function emitHudSnapshot() {
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
-    const tMob = targetMobId ? mobById.get(targetMobId) : undefined;
+    const tMob = targetMobId ? activeMobById.get(targetMobId) : undefined;
     const targetMob: TargetMobSnapshot | null =
       tMob && tMob.alive
         ? {
@@ -719,11 +780,13 @@ export function mountPronteraScene(
     }
 
     onHudUpdate({
+      zoneId: activeZoneId,
+      zoneName: getZoneName(activeZoneId),
       x: Math.round(playerX),
       z: Math.round(playerZ),
       yaw: playerYaw,
       camYaw,
-      district: getDistrictAt(playerX, playerZ),
+      district: getZoneDistrictAt(activeZoneId, playerX, playerZ),
       isMoving: moveSpeedGlobal > 0.25 || activePath.length > 0,
       level: playerLevel,
       exp: playerExp,
@@ -733,6 +796,79 @@ export function mountPronteraScene(
       targetMob,
       popups,
     });
+  }
+
+  function loadZone(nextZoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) {
+    const defSpawn = getZoneDefaultSpawn(nextZoneId);
+    const sx = spawnX ?? defSpawn.x;
+    const sz = spawnZ ?? defSpawn.z;
+    const syaw = spawnYaw ?? defSpawn.yaw;
+
+    if (nextZoneId !== activeZoneId) {
+      if (activeZoneId === 'prontera') {
+        scene.remove(pronteraGroup);
+      } else if (activeFieldZone) {
+        scene.remove(activeFieldZone.group);
+        activeFieldZone.dispose();
+        activeFieldZone = null;
+      }
+
+      activeZoneId = nextZoneId;
+
+      if (nextZoneId === 'prontera') {
+        scene.add(pronteraGroup);
+        activeNav = PRONTERA_NAV;
+        activeGroundPickMesh = pronteraGroundPick;
+        activeWaterMeshes = pronteraMoatWater;
+        activePortals = pronteraPortalsBuilt.portals;
+        activeMobActors = pronteraMobActors;
+        activeMobHitTargets = pronteraMobHitTargets;
+        activeMobById = pronteraMobById;
+        activeLanternLights = pronteraLanternLights;
+        activeLanternHalos = pronteraLanternHalos;
+      } else {
+        const built = buildFieldZoneScene(nextZoneId, mats, pbrUniforms, weatherUniforms);
+        activeFieldZone = built;
+        scene.add(built.group);
+        upgradeSceneMaterialsToAdvancedPBR(scene, pbrUniforms, weatherUniforms);
+        activeNav = createZoneNavGrid(nextZoneId);
+        activeGroundPickMesh = built.groundPickMesh;
+        activeWaterMeshes = built.waterMeshes;
+        activePortals = built.portals;
+        activeMobActors = built.mobActors;
+        activeMobHitTargets = built.mobHitTargets;
+        activeMobById = new Map(built.mobActors.map((m) => [m.id, m]));
+        activeLanternLights = [];
+        activeLanternHalos = [];
+      }
+    }
+
+    activePath = [];
+    pendingAttackMobId = null;
+    targetMobId = null;
+    cursorRingMesh.visible = false;
+    portalCooldown = 2.2;
+
+    playerX = sx;
+    playerZ = sz;
+    playerYaw = syaw;
+
+    const gy = zoneHeightAt(activeZoneId, playerX, playerZ);
+    hero.root.position.set(playerX, gy, playerZ);
+    hero.root.rotation.y = playerYaw;
+
+    camLookAt.set(playerX, gy + 1.45, playerZ);
+    const horiz = Math.cos(camPitch) * camDist;
+    camCurrentPos.set(
+      camLookAt.x + Math.sin(camYaw) * horiz,
+      camLookAt.y + Math.sin(camPitch) * camDist,
+      camLookAt.z + Math.cos(camYaw) * horiz,
+    );
+    camera.position.copy(camCurrentPos);
+    camera.lookAt(camLookAt);
+
+    spawnPopup(getZoneName(activeZoneId), 'levelup', playerX, gy + 2.4, playerZ);
+    emitHudSnapshot();
   }
 
   let frameId = 0;
@@ -800,6 +936,8 @@ export function mountPronteraScene(
     weatherUniforms.uWetness.value += ((weatherMode === 'rain' ? 1 : 0) - weatherUniforms.uWetness.value) * wBlend;
     weatherUniforms.uSnow.value += ((weatherMode === 'snow' ? 1 : 0) - weatherUniforms.uSnow.value) * wBlend;
     weatherUniforms.uLightning.value = lightningFlash;
+    const targetDaylight = timeOfDay === 'evening' ? 0.0 : timeOfDay === 'sunset' ? 0.35 : 1.0;
+    weatherUniforms.uDaylight.value += (targetDaylight - weatherUniforms.uDaylight.value) * (1 - Math.exp(-5.0 * atmDt));
 
     // 2. Smoothly blend Time-of-Day & Weather Lighting Rig
     const lt = getLightingTargets(timeOfDay, weatherMode);
@@ -838,14 +976,58 @@ export function mountPronteraScene(
     mats.stainedGlass.emissiveIntensity = mats.windowGlow.emissiveIntensity * 1.15;
     mats.lanternGlow.emissiveIntensity += (lt.emissiveLantern - mats.lanternGlow.emissiveIntensity) * atmK;
 
-    for (let i = 0; i < lanternLights.length; i++) {
-      const flicker = 0.92 + Math.sin(elapsed * 7.5 + i * 2.1) * 0.06 + Math.sin(elapsed * 13.0 + i) * 0.04;
-      const targetPl = (i === lanternLights.length - 1 ? Math.max(2.8, lt.lanternPointInt) : lt.lanternPointInt) * flicker;
-      lanternLights[i].intensity += (targetPl - lanternLights[i].intensity) * atmK;
+    // Reposition pooled 3 PointLights to the 3 closest lantern hubs around camera focus
+    if (activeLanternLights.length > 0 && activeZoneId === 'prontera') {
+      const sortedHubs = pronteraLanternHubs
+        .map((h) => ({
+          h,
+          d2: (h[0] - focusX) * (h[0] - focusX) + (h[2] - focusZ) * (h[2] - focusZ),
+        }))
+        .sort((a, b) => a.d2 - b.d2);
+      for (let i = 0; i < activeLanternLights.length; i++) {
+        const hub = sortedHubs[i % sortedHubs.length].h;
+        activeLanternLights[i].position.set(hub[0], hub[1], hub[2]);
+        const flicker = 0.92 + Math.sin(elapsed * 7.5 + i * 2.1) * 0.06 + Math.sin(elapsed * 13.0 + i) * 0.04;
+        const isForge = hub[0] === -25 && hub[2] === -27;
+        const targetPl = (isForge ? Math.max(2.8, lt.lanternPointInt) : lt.lanternPointInt) * flicker;
+        activeLanternLights[i].intensity += (targetPl - activeLanternLights[i].intensity) * atmK;
+      }
     }
-    for (let i = 0; i < lanternHalos.length; i++) {
-      const m = lanternHalos[i].material as THREE.SpriteMaterial;
+    for (let i = 0; i < activeLanternHalos.length; i++) {
+      const halo = activeLanternHalos[i];
+      const m = halo.material as THREE.SpriteMaterial;
       m.opacity += (lt.haloOpacity - m.opacity) * atmK;
+      const poolMat = halo.userData.poolMat as THREE.MeshBasicMaterial | undefined;
+      if (poolMat) {
+        poolMat.opacity = m.opacity * 0.75;
+      }
+    }
+
+    if (portalCooldown > 0) portalCooldown = Math.max(0, portalCooldown - dt);
+
+    // Animate Rune Portals & move shared portal beacon light to nearest portal
+    let nearestPortalDist = Infinity;
+    let nearestPortal: PortalVisual | null = null;
+    for (let i = 0; i < activePortals.length; i++) {
+      const pv = activePortals[i];
+      pv.vortexDisc.rotation.z += dt * 1.45;
+      pv.runeRing.rotation.z -= dt * 0.85;
+      const d = Math.hypot(pv.spec.x - focusX, pv.spec.z - focusZ);
+      if (d < nearestPortalDist) {
+        nearestPortalDist = d;
+        nearestPortal = pv;
+      }
+    }
+    if (nearestPortal) {
+      portalBeaconLight.position.set(
+        nearestPortal.spec.x,
+        zoneHeightAt(activeZoneId, nearestPortal.spec.x, nearestPortal.spec.z) + 2.6,
+        nearestPortal.spec.z,
+      );
+      portalBeaconLight.color.setHex(nearestPortal.spec.color);
+      portalBeaconLight.intensity = 1.45 + Math.sin(elapsed * 4.0) * 0.35;
+    } else {
+      portalBeaconLight.intensity = 0;
     }
 
     // 3. Player Movement & Pending Mob Attack Pursuit
@@ -863,7 +1045,7 @@ export function mountPronteraScene(
       }
 
       if (pendingAttackMobId) {
-        const pm = mobById.get(pendingAttackMobId);
+        const pm = activeMobById.get(pendingAttackMobId);
         if (!pm || !pm.alive) {
           pendingAttackMobId = null;
         } else if (Math.hypot(pm.x - playerX, pm.z - playerZ) <= SWORDSMAN_MELEE_RANGE) {
@@ -881,7 +1063,7 @@ export function mountPronteraScene(
       if (keys.has('KeyA') || keys.has('ArrowLeft')) inX -= 1;
       if (keys.has('KeyD') || keys.has('ArrowRight')) inX += 1;
 
-      const walkSpeed = 7.4;
+      const walkSpeed = 7.8;
 
       if (inX !== 0 || inZ !== 0) {
         activePath = [];
@@ -897,7 +1079,7 @@ export function mountPronteraScene(
 
         const nextX = playerX + wx * walkSpeed * dt;
         const nextZ = playerZ + wz * walkSpeed * dt;
-        const resolved = PRONTERA_NAV.resolveCollision(nextX, nextZ, 0.58);
+        const resolved = activeNav.resolveCollision(nextX, nextZ, 0.58, playerX, playerZ);
         const moved = Math.hypot(resolved.x - playerX, resolved.z - playerZ);
         playerX = resolved.x;
         playerZ = resolved.z;
@@ -923,10 +1105,12 @@ export function mountPronteraScene(
         } else {
           const vx = dx / dist;
           const vz = dz / dist;
-          const resolved = PRONTERA_NAV.resolveCollision(
+          const resolved = activeNav.resolveCollision(
             playerX + vx * step,
             playerZ + vz * step,
             0.58,
+            playerX,
+            playerZ,
           );
           playerX = resolved.x;
           playerZ = resolved.z;
@@ -939,10 +1123,22 @@ export function mountPronteraScene(
           playerYaw += diff * (1 - Math.exp(-16 * dt));
         }
       }
+
+      // Check Portal Warp Proximity
+      if (portalCooldown <= 0) {
+        for (let i = 0; i < activePortals.length; i++) {
+          const sp = activePortals[i].spec;
+          if (Math.hypot(playerX - sp.x, playerZ - sp.z) <= 2.65) {
+            audio.playMoveClick();
+            loadZone(sp.toZone, sp.targetX, sp.targetZ, sp.targetYaw);
+            break;
+          }
+        }
+      }
     }
     moveSpeedGlobal = moveSpeed;
 
-    const groundY = groundHeightAt(playerX, playerZ);
+    const groundY = zoneHeightAt(activeZoneId, playerX, playerZ);
     hero.root.position.set(playerX, groundY, playerZ);
     hero.root.rotation.y = playerYaw;
 
@@ -951,7 +1147,7 @@ export function mountPronteraScene(
       const stepHalf = Math.floor(walkPhase / Math.PI);
       if (stepHalf !== lastStepHalf) {
         lastStepHalf = stepHalf;
-        audio.playFootstep(isCobbleRoad(playerX, playerZ));
+        audio.playFootstep(activeZoneId === 'prontera' && isCobbleRoad(playerX, playerZ));
       }
     }
     animateHeroGait(hero, moveSpeed, walkPhase, elapsed, dt, attackAnim);
@@ -969,25 +1165,32 @@ export function mountPronteraScene(
       }
     }
 
-    // 5. Fountain & Moat Water Shimmer + Field Mobs Simulation & Respawn
-    fountainWater.rotation.z = elapsed * 0.15;
-    sprayGroup.scale.y = 0.96 + Math.sin(elapsed * 5.2) * 0.04;
-    for (let i = 0; i < moatWaterMeshes.length; i++) {
-      moatWaterMeshes[i].position.y = 0.085 + Math.sin(elapsed * 1.6 + i) * 0.012;
+    // 5. Fountain & Zone Water Shimmer + Mobs Simulation & Respawn
+    if (activeZoneId === 'prontera') {
+      fountainWater.rotation.z = elapsed * 0.15;
+      sprayGroup.scale.y = 0.96 + Math.sin(elapsed * 5.2) * 0.04;
+    }
+    const baseWaterY = activeZoneId === 'prontera' ? 0.085 : -0.35;
+    for (let i = 0; i < activeWaterMeshes.length; i++) {
+      activeWaterMeshes[i].position.y = baseWaterY + Math.sin(elapsed * 1.6 + i) * 0.012;
     }
 
-    for (let i = 0; i < mobActors.length; i++) {
-      const m = mobActors[i];
+    for (let i = 0; i < activeMobActors.length; i++) {
+      const m = activeMobActors[i];
       if (!m.alive) {
         m.respawnTimer -= dt;
         if (m.deathTimer > 0) {
           m.deathTimer = Math.max(0, m.deathTimer - dt);
           const dFrac = m.deathTimer / 0.34;
-          m.x += m.knockVx * dt;
-          m.z += m.knockVz * dt;
+          const kx = m.x + m.knockVx * dt;
+          const kz = m.z + m.knockVz * dt;
+          if (!activeNav.pointHitsCollider(kx, kz, 0.5)) {
+            m.x = kx;
+            m.z = kz;
+          }
           m.knockVx *= Math.exp(-8 * dt);
           m.knockVz *= Math.exp(-8 * dt);
-          m.group.position.set(m.x, groundHeightAt(m.x, m.z), m.z);
+          m.group.position.set(m.x, zoneHeightAt(activeZoneId, m.x, m.z), m.z);
           m.bodyMesh.scale.set(
             m.baseScale * (1.35 - dFrac * 0.35),
             m.baseScale * Math.max(0.06, dFrac),
@@ -1014,7 +1217,6 @@ export function mountPronteraScene(
         continue;
       }
 
-      // Hit flash feedback
       if (m.hitFlashTimer > 0) {
         m.hitFlashTimer = Math.max(0, m.hitFlashTimer - dt);
         m.jellyMat.emissive.setHex(0xffffff);
@@ -1023,11 +1225,10 @@ export function mountPronteraScene(
         m.jellyMat.emissiveIntensity = 0;
       }
 
-      // Knockback velocity + gentle idle roaming around spawn
       if (Math.hypot(m.knockVx, m.knockVz) > 0.05) {
         const kx = m.x + m.knockVx * dt;
         const kz = m.z + m.knockVz * dt;
-        if (groundHeightAt(kx, kz) >= -0.05) {
+        if (!activeNav.pointHitsCollider(kx, kz, 0.6)) {
           m.x = kx;
           m.z = kz;
         }
@@ -1035,28 +1236,112 @@ export function mountPronteraScene(
         m.knockVz *= Math.exp(-9 * dt);
       } else {
         m.hopPhase += m.hopSpeed * dt;
-        const hopSine = Math.sin(m.hopPhase);
-        const air = Math.max(0, hopSine);
-        if (air > 0.02) {
-          m.angle += 0.36 * dt;
-          const nx = m.homeX + Math.cos(m.angle + i) * 2.4;
-          const nz = m.homeZ + Math.sin(m.angle + i) * 2.4;
-          m.x += (nx - m.x) * Math.min(1, dt * 4);
-          m.z += (nz - m.z) * Math.min(1, dt * 4);
+
+        if (m.kind === 'wolf' || m.kind === 'briar_boar') {
+          m.angle += 0.42 * dt;
+          const roamR = m.kind === 'wolf' ? 3.6 : 2.9;
+          const nx = m.homeX + Math.cos(m.angle + i) * roamR;
+          const nz = m.homeZ + Math.sin(m.angle + i) * roamR;
+          if (!activeNav.pointHitsCollider(nx, nz, 0.6)) {
+            m.x += (nx - m.x) * Math.min(1, dt * 3.5);
+            m.z += (nz - m.z) * Math.min(1, dt * 3.5);
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          const trot = Math.sin(m.hopPhase * 1.45);
+          m.bodyMesh.position.y = Math.abs(trot) * 0.08;
+          if (m.wolfLegs) {
+            m.wolfLegs[0].rotation.x = trot * 0.55;
+            m.wolfLegs[1].rotation.x = -trot * 0.55;
+            m.wolfLegs[2].rotation.x = -trot * 0.55;
+            m.wolfLegs[3].rotation.x = trot * 0.55;
+          }
+          if (m.tailGroup) {
+            m.tailGroup.rotation.y = Math.sin(elapsed * 4.5 + i) * 0.28;
+          }
+          if (m.headGroup) {
+            m.headGroup.rotation.x = Math.sin(elapsed * 2.2 + i) * 0.08;
+          }
+        } else if (m.kind === 'ember_beetle') {
+          m.angle += 0.46 * dt;
+          const nx = m.homeX + Math.cos(m.angle + i) * 2.6;
+          const nz = m.homeZ + Math.sin(m.angle + i) * 2.6;
+          if (!activeNav.pointHitsCollider(nx, nz, 0.55)) {
+            m.x += (nx - m.x) * Math.min(1, dt * 3.8);
+            m.z += (nz - m.z) * Math.min(1, dt * 3.8);
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          const scuttle = Math.sin(m.hopPhase * 2.2);
+          m.bodyMesh.position.y = Math.abs(scuttle) * 0.04;
+          m.bodyMesh.rotation.z = scuttle * 0.05;
+        } else if (m.kind === 'frost_wisp') {
+          m.angle += 0.34 * dt;
+          const nx = m.homeX + Math.cos(m.angle + i) * 2.8;
+          const nz = m.homeZ + Math.sin(m.angle + i) * 2.8;
+          if (!activeNav.pointHitsCollider(nx, nz, 0.55)) {
+            m.x += (nx - m.x) * Math.min(1, dt * 3.2);
+            m.z += (nz - m.z) * Math.min(1, dt * 3.2);
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          m.bodyMesh.position.y = 0.14 + Math.sin(m.hopPhase * 0.9) * 0.12;
+          if (m.tailGroup) {
+            m.tailGroup.rotation.y += dt * 1.85;
+          }
+        } else if (m.kind === 'goblin') {
+          m.angle += 0.38 * dt;
+          const nx = m.homeX + Math.cos(m.angle + i) * 2.8;
+          const nz = m.homeZ + Math.sin(m.angle + i) * 2.8;
+          if (!activeNav.pointHitsCollider(nx, nz, 0.6)) {
+            m.x += (nx - m.x) * Math.min(1, dt * 3.5);
+            m.z += (nz - m.z) * Math.min(1, dt * 3.5);
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          const stride = Math.sin(m.hopPhase * 1.2);
+          m.bodyMesh.position.y = Math.abs(stride) * 0.09;
+          if (m.leftArm && m.rightArm) {
+            m.leftArm.rotation.x = stride * 0.52;
+            m.rightArm.rotation.x = -stride * 0.62 - 0.25;
+          }
+        } else if (m.kind === 'ent') {
+          m.angle += 0.20 * dt;
+          const nx = m.homeX + Math.cos(m.angle + i) * 2.6;
+          const nz = m.homeZ + Math.sin(m.angle + i) * 2.6;
+          if (!activeNav.pointHitsCollider(nx, nz, 0.8)) {
+            m.x += (nx - m.x) * Math.min(1, dt * 2.2);
+            m.z += (nz - m.z) * Math.min(1, dt * 2.2);
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          const lumber = Math.sin(m.hopPhase);
+          m.bodyMesh.rotation.z = lumber * 0.045;
+          if (m.leftArm && m.rightArm) {
+            m.leftArm.rotation.x = lumber * 0.42;
+            m.rightArm.rotation.x = -lumber * 0.42;
+          }
+        } else {
+          const hopSine = Math.sin(m.hopPhase);
+          const air = Math.max(0, hopSine);
+          if (air > 0.02) {
+            m.angle += 0.36 * dt;
+            const nx = m.homeX + Math.cos(m.angle + i) * 2.4;
+            const nz = m.homeZ + Math.sin(m.angle + i) * 2.4;
+            if (!activeNav.pointHitsCollider(nx, nz, 0.5)) {
+              m.x += (nx - m.x) * Math.min(1, dt * 4);
+              m.z += (nz - m.z) * Math.min(1, dt * 4);
+            }
+          }
+          m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
+          m.bodyMesh.position.y = air * 0.32;
+          const squash = air > 0.05 ? 1 + air * 0.14 : 1 - Math.abs(hopSine) * 0.12;
+          const stretchXZ = 1 / Math.sqrt(squash);
+          m.bodyMesh.scale.set(
+            m.baseScale * stretchXZ,
+            m.baseScale * squash,
+            m.baseScale * stretchXZ,
+          );
+          m.shadowMesh.scale.setScalar(m.baseScale * (1 - air * 0.18));
         }
-        m.group.rotation.y = Math.atan2(-Math.sin(m.angle + i), Math.cos(m.angle + i));
-        m.bodyMesh.position.y = air * 0.58;
-        const squash = air > 0.05 ? 1 + air * 0.16 : 1 - Math.abs(hopSine) * 0.14;
-        const stretchXZ = 1 / Math.sqrt(squash);
-        m.bodyMesh.scale.set(
-          m.baseScale * stretchXZ,
-          m.baseScale * squash,
-          m.baseScale * stretchXZ,
-        );
-        m.shadowMesh.scale.setScalar(m.baseScale * (1 - air * 0.22));
       }
 
-      const py = groundHeightAt(m.x, m.z);
+      const py = zoneHeightAt(activeZoneId, m.x, m.z);
       m.group.position.set(m.x, py, m.z);
 
       if (m.hpBarGroup.visible) {
@@ -1163,7 +1448,7 @@ export function mountPronteraScene(
     setPlaying: (playing: boolean) => {
       isPlaying = playing;
       if (playing) {
-        const gy = groundHeightAt(playerX, playerZ);
+        const gy = zoneHeightAt(activeZoneId, playerX, playerZ);
         camYaw = targetCamYaw;
         camPitch = targetCamPitch;
         camDist = targetCamDist;
@@ -1184,6 +1469,7 @@ export function mountPronteraScene(
       timeOfDay = mode;
       activeEnvMode = mode;
       scene.environment = diabloEnvRig.getTexture(mode);
+      weatherUniforms.uDaylight.value = mode === 'evening' ? 0.0 : mode === 'sunset' ? 0.35 : 1.0;
     },
     setWeather: (weather: WeatherMode) => {
       weatherMode = weather;
@@ -1213,15 +1499,23 @@ export function mountPronteraScene(
       targetCamDist = 20.5;
     },
     teleportToLandmark: (landmarkId: string) => {
-      const lm = LANDMARKS.find((l) => l.id === landmarkId);
+      const zoneList = getZoneLandmarks(activeZoneId);
+      const lm = zoneList.find((l) => l.id === landmarkId) ?? LANDMARKS.find((l) => l.id === landmarkId);
       if (!lm) return;
+
+      if (activeZoneId !== 'prontera' && !zoneList.some((l) => l.id === landmarkId)) {
+        loadZone('prontera', lm.x, lm.z, lm.facingYaw);
+        audio.playMoveClick();
+        return;
+      }
+
       activePath = [];
       pendingAttackMobId = null;
       cursorRingMesh.visible = false;
       playerX = lm.x;
       playerZ = lm.z;
       playerYaw = lm.facingYaw;
-      const gy = groundHeightAt(playerX, playerZ);
+      const gy = zoneHeightAt(activeZoneId, playerX, playerZ);
       camLookAt.set(playerX, gy + 1.45, playerZ);
       const horiz = Math.cos(camPitch) * camDist;
       camCurrentPos.set(
@@ -1230,14 +1524,19 @@ export function mountPronteraScene(
         camLookAt.z + Math.cos(camYaw) * horiz,
       );
       audio.playMoveClick();
+      emitHudSnapshot();
+    },
+    warpToZone: (nextZoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => {
+      audio.playMoveClick();
+      loadZone(nextZoneId, spawnX, spawnZ, spawnYaw);
     },
     walkToWorldPoint: (x: number, z: number) => {
-      const path = PRONTERA_NAV.findPath(playerX, playerZ, x, z);
+      const path = activeNav.findPath(playerX, playerZ, x, z);
       if (path.length > 0) {
         activePath = path;
         pendingAttackMobId = null;
         const dest = path[path.length - 1];
-        cursorRingMesh.position.set(dest.x, groundHeightAt(dest.x, dest.z) + 0.065, dest.z);
+        cursorRingMesh.position.set(dest.x, zoneHeightAt(activeZoneId, dest.x, dest.z) + 0.065, dest.z);
         cursorRingMesh.visible = true;
         cursorRingLife = 1.4;
         audio.playMoveClick();
@@ -1263,6 +1562,7 @@ export function mountPronteraScene(
       document.removeEventListener('visibilitychange', onVisibility);
       canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
+      activeFieldZone?.dispose();
       audio.dispose();
       weatherSystem.dispose();
       composer?.dispose();

@@ -15,8 +15,10 @@ export interface PronteraMaterials {
   curbStone: THREE.MeshStandardMaterial;
   grass: THREE.MeshStandardMaterial;
   grassBladeMat: THREE.MeshStandardMaterial;
+  tallGrassBladeMat: THREE.MeshStandardMaterial;
   wildflowerMat: THREE.MeshStandardMaterial;
   dirtPath: THREE.MeshStandardMaterial;
+  cliffRock: THREE.MeshStandardMaterial;
   castleWall: THREE.MeshStandardMaterial;
   plasterTimber: THREE.MeshStandardMaterial;
   roofCobalt: THREE.MeshStandardMaterial;
@@ -44,13 +46,28 @@ export interface PronteraMaterials {
   foliageOakMat: THREE.MeshStandardMaterial;
   foliagePineMat: THREE.MeshStandardMaterial;
   foliageCypressMat: THREE.MeshStandardMaterial;
+  foliageBirchMat: THREE.MeshStandardMaterial;
   shrubLeafMat: THREE.MeshStandardMaterial;
   shrubFlowerMat: THREE.MeshStandardMaterial;
   trunkMat: THREE.MeshStandardMaterial;
+  wickerMat: THREE.MeshStandardMaterial;
+  appleRedMat: THREE.MeshPhysicalMaterial;
+  appleGreenMat: THREE.MeshPhysicalMaterial;
+  orangeMat: THREE.MeshPhysicalMaterial;
+  grapeMat: THREE.MeshPhysicalMaterial;
+  watermelonMat: THREE.MeshPhysicalMaterial;
+  pumpkinMat: THREE.MeshStandardMaterial;
+  pearMat: THREE.MeshPhysicalMaterial;
   aoSkirt: THREE.MeshBasicMaterial;
   contactShadow: THREE.MeshBasicMaterial;
   cursorRing: THREE.MeshBasicMaterial;
   haloGlowTex: THREE.CanvasTexture;
+  grassPbrMap: THREE.CanvasTexture;
+  grassPbrNormal: THREE.CanvasTexture;
+  cliffPbrMap: THREE.CanvasTexture;
+  cliffPbrNormal: THREE.CanvasTexture;
+  trailPbrMap: THREE.CanvasTexture;
+  trailPbrNormal: THREE.CanvasTexture;
   createAwningMaterial: (canopyColor: number, accentColor: number) => THREE.MeshPhysicalMaterial;
   dispose: () => void;
 }
@@ -253,61 +270,100 @@ function createGrassTextures(size = 1024): {
   const [hCanvas, hCtx] = makeCanvas(size);
   const rand = seededRand(309);
 
-  // Richer deep earthy-emerald Diablo-meadow ground base
-  ctx.fillStyle = '#3c5e2b';
+  // Deep organic humus & forest-meadow soil underlayer
+  ctx.fillStyle = '#2d4720';
   ctx.fillRect(0, 0, size, size);
-  hCtx.fillStyle = '#686868';
+  hCtx.fillStyle = '#484848';
   hCtx.fillRect(0, 0, size, size);
 
-  // Earthy soil & moss variation patches
-  for (let i = 0; i < 650; i++) {
+  const drawWrappedDisc = (
+    c: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    r: number,
+    fill: string,
+  ) => {
+    c.fillStyle = fill;
+    for (const ox of [-size, 0, size]) {
+      for (const oy of [-size, 0, size]) {
+        const px = x + ox;
+        const py = y + oy;
+        if (px < -r || px > size + r || py < -r || py > size + r) continue;
+        c.beginPath();
+        c.arc(px, py, r, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  };
+
+  // Multi-scale moss cushions, rich loam soil, and sunlit meadow patches
+  for (let i = 0; i < 950; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = 16 + rand() * 44;
+    const r = 14 + rand() * 48;
     const s = rand();
-    ctx.fillStyle =
-      s < 0.35
-        ? 'rgba(78, 114, 48, 0.28)'
+    const col =
+      s < 0.36
+        ? 'rgba(72, 108, 44, 0.30)'
         : s < 0.72
-          ? 'rgba(46, 76, 34, 0.32)'
-          : 'rgba(92, 82, 52, 0.24)';
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-
-    const hv = Math.floor(85 + rand() * 55);
-    hCtx.fillStyle = `rgba(${hv},${hv},${hv},0.25)`;
-    hCtx.beginPath();
-    hCtx.arc(x, y, r, 0, Math.PI * 2);
-    hCtx.fill();
+          ? 'rgba(42, 72, 29, 0.34)'
+          : 'rgba(66, 56, 36, 0.26)';
+    drawWrappedDisc(ctx, x, y, r, col);
+    const hv = Math.floor(72 + rand() * 64);
+    drawWrappedDisc(hCtx, x, y, r, `rgba(${hv},${hv},${hv},0.28)`);
   }
 
-  // Fine dense grass fibers + dark root shadows
-  for (let i = 0; i < 9500; i++) {
+  // 24,000+ layered botanical grass blades & clover micro-leaves with root AO & crisp blade relief
+  for (let i = 0; i < 24000; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const len = 5 + rand() * 11;
-    const tilt = (rand() - 0.5) * 6;
-    const g = 86 + Math.floor(rand() * 68);
-    ctx.strokeStyle = `rgb(${Math.floor(g * 0.56)}, ${g}, ${Math.floor(g * 0.40)})`;
-    ctx.lineWidth = 1.4;
+    const len = 6 + rand() * 15;
+    const bend = (rand() - 0.5) * 9;
+    const tier = i / 24000;
+    const g = Math.floor(68 + tier * 58 + rand() * 34);
+    const rCh = Math.floor(g * (0.50 + (rand() - 0.5) * 0.12));
+    const bCh = Math.floor(g * (0.34 + (rand() - 0.5) * 0.08));
+
+    ctx.strokeStyle = `rgb(${rCh}, ${g}, ${bCh})`;
+    ctx.lineWidth = 1.1 + (1.0 - tier) * 1.1;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + tilt, y - len);
+    ctx.quadraticCurveTo(x + bend * 0.45, y - len * 0.55, x + bend, y - len);
     ctx.stroke();
 
-    const bv = 135 + Math.floor(rand() * 90);
+    const bv = Math.min(252, Math.floor(110 + tier * 115 + rand() * 25));
     hCtx.strokeStyle = `rgb(${bv},${bv},${bv})`;
-    hCtx.lineWidth = 1.4;
+    hCtx.lineWidth = 1.3;
+    ctx.beginPath();
     hCtx.beginPath();
     hCtx.moveTo(x, y);
-    hCtx.lineTo(x + tilt, y - len);
+    hCtx.quadraticCurveTo(x + bend * 0.45, y - len * 0.55, x + bend, y - len);
     hCtx.stroke();
+  }
+
+  // Wild clover & moss rosette clusters
+  for (let i = 0; i < 1800; i++) {
+    const cx = rand() * size;
+    const cy = rand() * size;
+    const g = 92 + Math.floor(rand() * 48);
+    ctx.fillStyle = `rgb(${Math.floor(g * 0.54)}, ${g}, ${Math.floor(g * 0.38)})`;
+    hCtx.fillStyle = '#dcdcdc';
+    for (let k = 0; k < 3; k++) {
+      const a = (k * Math.PI * 2) / 3 + rand() * 0.5;
+      const lx = cx + Math.cos(a) * 2.6;
+      const ly = cy + Math.sin(a) * 2.6;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+      hCtx.beginPath();
+      hCtx.arc(lx, ly, 2.1, 0, Math.PI * 2);
+      hCtx.fill();
+    }
   }
 
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
-  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 2.2, 0.72, 0.96, true);
+  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 2.8, 0.68, 0.96, true);
   return { map, normal, roughness, ao };
 }
 
@@ -462,7 +518,7 @@ function createBarkTextures(size = 1024): {
   const [hCanvas, hCtx] = makeCanvas(size);
   const rand = seededRand(883);
 
-  ctx.fillStyle = '#4e3928';
+  ctx.fillStyle = '#6e523a';
   ctx.fillRect(0, 0, size, size);
   hCtx.fillStyle = '#707070';
   hCtx.fillRect(0, 0, size, size);
@@ -474,7 +530,7 @@ function createBarkTextures(size = 1024): {
     const h = 40 + rand() * 140;
     const w = 4 + rand() * 14;
     const dark = rand() < 0.48;
-    ctx.fillStyle = dark ? 'rgba(32, 22, 15, 0.52)' : 'rgba(104, 82, 58, 0.38)';
+    ctx.fillStyle = dark ? 'rgba(46, 31, 20, 0.46)' : 'rgba(138, 110, 82, 0.42)';
     ctx.beginPath();
     ctx.ellipse(x, y, w * 0.5, h * 0.5, (rand() - 0.5) * 0.14, 0, Math.PI * 2);
     ctx.fill();
@@ -697,16 +753,219 @@ function createBotanicalFoliageTextures(
 function createDirtTexture(size = 512): THREE.CanvasTexture {
   const [canvas, ctx] = makeCanvas(size);
   const rand = seededRand(1213);
-  ctx.fillStyle = '#7e6544';
+  ctx.fillStyle = '#8b704b';
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < 2400; i++) {
+  for (let i = 0; i < 3600; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = 1.5 + rand() * 5.5;
-    ctx.fillStyle = rand() > 0.5 ? 'rgba(96, 74, 48, 0.34)' : 'rgba(154, 128, 88, 0.25)';
+    const r = 1.2 + rand() * 4.8;
+    ctx.fillStyle = rand() > 0.5 ? 'rgba(98, 76, 48, 0.32)' : 'rgba(166, 139, 96, 0.28)';
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Rebuilt from scratch: High-definition stony/cobbled medieval country road texture
+ * with embedded flagstones, compacted gravel, and deep mortar/soil crevices.
+ */
+function createFieldTrailPbr(size = 1024): {
+  map: THREE.CanvasTexture;
+  normal: THREE.CanvasTexture;
+} {
+  const [canvas, ctx] = makeCanvas(size);
+  const [hCanvas, hCtx] = makeCanvas(size);
+  const rand = seededRand(4021);
+
+  // Compacted earth & crushed limestone roadbed base
+  ctx.fillStyle = '#7d6c55';
+  ctx.fillRect(0, 0, size, size);
+  hCtx.fillStyle = '#484848';
+  hCtx.fillRect(0, 0, size, size);
+
+  const drawWrappedEllipse = (
+    c: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    rx: number,
+    ry: number,
+    rot: number,
+    fill: string,
+    stroke?: string,
+  ) => {
+    c.fillStyle = fill;
+    if (stroke) {
+      c.strokeStyle = stroke;
+      c.lineWidth = 2.0;
+    }
+    for (const ox of [-size, 0, size]) {
+      for (const oy of [-size, 0, size]) {
+        const px = x + ox;
+        const py = y + oy;
+        if (px < -rx * 2 || px > size + rx * 2 || py < -ry * 2 || py > size + ry * 2) continue;
+        c.beginPath();
+        c.ellipse(px, py, rx, ry, rot, 0, Math.PI * 2);
+        c.fill();
+        if (stroke) c.stroke();
+      }
+    }
+  };
+
+  // Coarse compacted soil & gravel patches
+  for (let i = 0; i < 4200; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 2.5 + rand() * 8.5;
+    const rot = rand() * Math.PI;
+    const dark = rand() > 0.48;
+    const col = dark ? 'rgba(92, 78, 58, 0.26)' : 'rgba(154, 138, 110, 0.24)';
+    drawWrappedEllipse(ctx, x, y, r * 1.3, r * 0.9, rot, col);
+    const hv = dark ? 64 : 112;
+    drawWrappedEllipse(hCtx, x, y, r * 1.3, r * 0.9, rot, `rgba(${hv},${hv},${hv},0.25)`);
+  }
+
+  // Embedded weathered cobblestones & country flagstones (stony Kaldgard road feel)
+  const cells = 14;
+  const step = size / cells;
+  for (let gy = 0; gy < cells; gy++) {
+    for (let gx = 0; gx < cells; gx++) {
+      if (rand() < 0.14) continue; // Occasional worn earth gap between stones
+      const shift = (gy % 2) * (step * 0.48);
+      const cx = (gx * step + shift + (rand() - 0.5) * step * 0.28 + size) % size;
+      const cy = (gy * step + (rand() - 0.5) * step * 0.28 + size) % size;
+      const rx = step * (0.30 + rand() * 0.14);
+      const ry = step * (0.25 + rand() * 0.13);
+      const rot = (rand() - 0.5) * 0.65;
+
+      const baseTone = 136 + Math.floor(rand() * 44);
+      const warm = Math.floor((rand() - 0.3) * 16);
+      const stoneCol = `rgb(${baseTone + warm}, ${baseTone + Math.floor(warm * 0.6)}, ${baseTone - 10})`;
+      drawWrappedEllipse(ctx, cx, cy, rx, ry, rot, stoneCol, 'rgba(48, 40, 30, 0.68)');
+
+      // Highlighted stone crown
+      const hiTone = Math.min(235, baseTone + 26);
+      drawWrappedEllipse(
+        ctx,
+        cx - rx * 0.14,
+        cy - ry * 0.14,
+        rx * 0.58,
+        ry * 0.54,
+        rot,
+        `rgba(${hiTone}, ${hiTone - 4}, ${hiTone - 14}, 0.45)`,
+      );
+
+      // Stone height relief for crisp normal map
+      const hVal = 178 + Math.floor(rand() * 56);
+      drawWrappedEllipse(hCtx, cx, cy, rx, ry, rot, `rgb(${hVal},${hVal},${hVal})`, '#262626');
+    }
+  }
+
+  // Fine angular crushed stone & pebbles scattered in joints
+  for (let i = 0; i < 3200; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 1.1 + rand() * 3.2;
+    const tone = 112 + Math.floor(rand() * 88);
+    drawWrappedEllipse(ctx, x, y, r * 1.2, r * 0.85, rand() * Math.PI, `rgb(${tone},${tone - 5},${tone - 14})`);
+    const hv = 135 + Math.floor(rand() * 90);
+    drawWrappedEllipse(hCtx, x, y, r * 1.2, r * 0.85, 0, `rgb(${hv},${hv},${hv})`);
+  }
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const { normal } = buildNormalAndRoughnessFromHeight(hCanvas, 2.9, 0.58, 0.95, true);
+  return { map, normal };
+}
+
+function createCliffRockPbr(size = 1024): {
+  map: THREE.CanvasTexture;
+  normal: THREE.CanvasTexture;
+  roughness: THREE.CanvasTexture;
+  ao: THREE.CanvasTexture;
+} {
+  const [canvas, ctx] = makeCanvas(size);
+  const [hCanvas, hCtx] = makeCanvas(size);
+  const rand = seededRand(8841);
+
+  ctx.fillStyle = '#5f635a';
+  ctx.fillRect(0, 0, size, size);
+  hCtx.fillStyle = '#888888';
+  hCtx.fillRect(0, 0, size, size);
+
+  // Stratified sedimentary granite bands + vertical fractures
+  for (let y = 0; y < size; y += 6) {
+    const band = Math.sin((y / size) * Math.PI * 16) * 14 + Math.cos((y / size) * Math.PI * 34) * 8;
+    const lum = Math.max(58, Math.min(148, Math.round(98 + band)));
+    ctx.fillStyle = `rgb(${lum - 2}, ${lum}, ${lum - 7})`;
+    ctx.fillRect(0, y, size, 7);
+    const hlum = Math.max(48, Math.min(210, Math.round(135 + band * 2.1)));
+    hCtx.fillStyle = `rgb(${hlum},${hlum},${hlum})`;
+    hCtx.fillRect(0, y, size, 7);
+  }
+
+  for (let i = 0; i < 4200; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const w = 6 + rand() * 34;
+    const h = 2 + rand() * 9;
+    const shade = rand() > 0.5 ? 'rgba(38, 42, 36, 0.25)' : 'rgba(155, 160, 144, 0.20)';
+    ctx.fillStyle = shade;
+    ctx.fillRect(x, y, w, h);
+
+    const hv = rand() > 0.5 ? 60 : 196;
+    hCtx.fillStyle = `rgba(${hv},${hv},${hv},0.22)`;
+    hCtx.fillRect(x, y, w, h);
+  }
+
+  // Subtle moss streaks in rock crevices
+  for (let i = 0; i < 450; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    ctx.fillStyle = 'rgba(72, 98, 48, 0.22)';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 5 + rand() * 14, 2 + rand() * 5, rand() * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 3.1, 0.56, 0.95, true);
+  return { map, normal, roughness, ao };
+}
+
+function createWatermelonTexture(size = 256): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(size);
+  ctx.fillStyle = '#337530';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#163a18';
+  ctx.lineWidth = 10;
+  for (let x = 8; x < size; x += 26) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    for (let y = 0; y <= size; y += 16) {
+      ctx.lineTo(x + Math.sin(y * 0.12 + x) * 4, y);
+    }
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createWickerTexture(size = 256): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(size);
+  ctx.fillStyle = '#9c723f';
+  ctx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += 16) {
+    for (let x = 0; x < size; x += 16) {
+      const alt = ((x / 16 + y / 16) | 0) % 2 === 0;
+      ctx.fillStyle = alt ? '#b88b50' : '#7b5629';
+      ctx.fillRect(x + 1, y + 1, 14, 14);
+    }
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -726,15 +985,35 @@ function createContactShadowTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+/**
+ * Pure smooth Gaussian atmospheric mist glow without hard circular rim or banding.
+ */
 function createHaloGlowTexture(): THREE.CanvasTexture {
-  const [canvas, ctx] = makeCanvas(128);
-  const grad = ctx.createRadialGradient(64, 64, 2, 64, 64, 62);
-  grad.addColorStop(0, 'rgba(255, 224, 152, 0.95)');
-  grad.addColorStop(0.28, 'rgba(255, 176, 78, 0.45)');
-  grad.addColorStop(0.65, 'rgba(255, 130, 42, 0.12)');
-  grad.addColorStop(1, 'rgba(255, 110, 30, 0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 128, 128);
+  const size = 256;
+  const [canvas, ctx] = makeCanvas(size);
+  const img = ctx.createImageData(size, size);
+  const d = img.data;
+  const half = size * 0.5;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x + 0.5 - half) / half;
+      const dy = (y + 0.5 - half) / half;
+      const r2 = dx * dx + dy * dy;
+      const r = Math.sqrt(r2);
+      // Smooth edge fade reaching exact 0 by r=0.92 + gentle inverse-exponential core
+      const edge = Math.max(0, 1 - r / 0.92);
+      const smoothEdge = edge * edge * (3 - 2 * edge);
+      const gauss = Math.exp(-r2 * 8.5) * smoothEdge;
+      const core = Math.exp(-r2 * 26.0) * 0.35;
+      const alpha = Math.min(1, gauss * 0.75 + core);
+      const idx = (y * size + x) * 4;
+      d[idx] = 255;
+      d[idx + 1] = Math.round(170 + 65 * Math.exp(-r2 * 14));
+      d[idx + 2] = Math.round(78 + 90 * Math.exp(-r2 * 20));
+      d[idx + 3] = Math.round(alpha * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -817,16 +1096,16 @@ function createWaterNormalTexture(size = 1024): THREE.CanvasTexture {
   const img = hCtx.createImageData(size, size);
   const d = img.data;
   const twoPi = Math.PI * 2;
-  // Seamless periodic multi-octave wavelet heightfield (zero seams across UV edges)
+  // Seamless 6-octave directional Gerstner swell + capillary wavelet heightfield
   for (let y = 0; y < size; y++) {
     const v = (y / size) * twoPi;
     for (let x = 0; x < size; x++) {
       const u = (x / size) * twoPi;
-      const w1 = Math.sin(u * 3 + v * 2) * 0.28 + Math.cos(u * 4 - v * 3) * 0.24;
-      const w2 = Math.sin(u * 7 - v * 6 + 1.1) * 0.16 + Math.cos(u * 9 + v * 7 + 0.5) * 0.14;
-      const w3 = Math.sin(u * 15 + v * 12) * 0.08 + Math.cos(u * 19 - v * 16) * 0.06;
-      const w4 = Math.sin(u * 29 - v * 25 + 2.1) * 0.04;
-      const val = Math.max(0, Math.min(255, Math.round(128 + (w1 + w2 + w3 + w4) * 110)));
+      const w1 = Math.sin(u * 2 + v * 1) * 0.24 + Math.cos(u * 3 - v * 2) * 0.22;
+      const w2 = Math.sin(u * 5 - v * 4 + 0.8) * 0.16 + Math.cos(u * 7 + v * 5 + 0.4) * 0.14;
+      const w3 = Math.sin(u * 11 + v * 9 + 1.7) * 0.09 + Math.cos(u * 13 - v * 11) * 0.08;
+      const w4 = Math.sin(u * 21 - v * 17 + 2.3) * 0.04 + Math.cos(u * 27 + v * 23) * 0.03;
+      const val = Math.max(0, Math.min(255, Math.round(128 + (w1 + w2 + w3 + w4) * 115)));
       const idx = (y * size + x) * 4;
       d[idx] = val;
       d[idx + 1] = val;
@@ -835,7 +1114,7 @@ function createWaterNormalTexture(size = 1024): THREE.CanvasTexture {
     }
   }
   hCtx.putImageData(img, 0, 0);
-  const { normal } = buildNormalAndRoughnessFromHeight(hCanvas, 2.8, 0.04, 0.14, true);
+  const { normal } = buildNormalAndRoughnessFromHeight(hCanvas, 3.1, 0.06, 0.18, true);
   return normal;
 }
 
@@ -948,9 +1227,12 @@ export function createPronteraMaterials(
     return m;
   };
 
+  const procRes = isSoftwareGl ? 512 : 1024;
+  const leafRes = isSoftwareGl ? 512 : 1024;
+
   // Fallback synchronous normal/roughness/ao maps for image textures (upgraded pixel-for-pixel once loaded)
   const cobbleFallbackPbr = buildNormalAndRoughnessFromHeight(
-    createCobbleFallbackHeight(1024),
+    createCobbleFallbackHeight(procRes),
     3.0,
     0.45,
     0.92,
@@ -961,7 +1243,7 @@ export function createPronteraMaterials(
   trackTex(cobbleFallbackPbr.ao, false);
 
   const wallFallbackPbr = buildNormalAndRoughnessFromHeight(
-    createStoneWallFallbackHeight(1024),
+    createStoneWallFallbackHeight(procRes),
     2.6,
     0.58,
     0.94,
@@ -1059,7 +1341,7 @@ export function createPronteraMaterials(
   const cobbleMap = trackTex(
     loader.load(cobbleUrl, (tex) => {
       if (tex.image) {
-        const pbr = derivePbrFromLoadedImage(tex.image, 1024, 3.2, 0.46, 0.94);
+        const pbr = derivePbrFromLoadedImage(tex.image, procRes, 3.2, 0.46, 0.94);
         trackTex(pbr.normal, false);
         trackTex(pbr.roughness, false);
         trackTex(pbr.ao, false);
@@ -1076,7 +1358,7 @@ export function createPronteraMaterials(
   const wallMap = trackTex(
     loader.load(wallUrl, (tex) => {
       if (tex.image) {
-        const pbr = derivePbrFromLoadedImage(tex.image, 1024, 2.7, 0.56, 0.94);
+        const pbr = derivePbrFromLoadedImage(tex.image, procRes, 2.7, 0.56, 0.94);
         trackTex(pbr.normal, false);
         trackTex(pbr.roughness, false);
         trackTex(pbr.ao, false);
@@ -1093,7 +1375,7 @@ export function createPronteraMaterials(
   const roofBaseTex = trackTex(
     loader.load(roofUrl, (tex) => {
       if (tex.image) {
-        const pbr = derivePbrFromLoadedImage(tex.image, 1024, 3.0, 0.42, 0.86);
+        const pbr = derivePbrFromLoadedImage(tex.image, procRes, 3.0, 0.42, 0.86);
         trackTex(pbr.normal, false);
         trackTex(pbr.roughness, false);
         trackTex(pbr.ao, false);
@@ -1113,31 +1395,31 @@ export function createPronteraMaterials(
   roofRoyal.map = roofBaseTex;
 
   // Full-HD Procedural PBR Materials
-  const grassPbr = createGrassTextures(1024);
+  const grassPbr = createGrassTextures(procRes);
   trackTex(grassPbr.map, true, 54, 54);
   trackTex(grassPbr.normal, false, 54, 54);
   trackTex(grassPbr.roughness, false, 54, 54);
   trackTex(grassPbr.ao, false, 54, 54);
 
-  const plasterPbr = createHalfTimberPlasterTextures(1024);
+  const plasterPbr = createHalfTimberPlasterTextures(procRes);
   trackTex(plasterPbr.map, true);
   trackTex(plasterPbr.normal, false);
   trackTex(plasterPbr.roughness, false);
   trackTex(plasterPbr.ao, false);
 
-  const woodPbr = createWoodPlankTextures(1024, '#624026');
+  const woodPbr = createWoodPlankTextures(procRes, '#624026');
   trackTex(woodPbr.map, true);
   trackTex(woodPbr.normal, false);
   trackTex(woodPbr.roughness, false);
   trackTex(woodPbr.ao, false);
 
-  const barkPbr = createBarkTextures(1024);
+  const barkPbr = createBarkTextures(procRes);
   trackTex(barkPbr.map, true, 2, 3);
   trackTex(barkPbr.normal, false, 2, 3);
   trackTex(barkPbr.roughness, false, 2, 3);
   trackTex(barkPbr.ao, false, 2, 3);
 
-  const marblePbr = createMarbleTextures(1024);
+  const marblePbr = createMarbleTextures(procRes);
   trackTex(marblePbr.map, true, 2, 2);
   trackTex(marblePbr.normal, false, 2, 2);
   trackTex(marblePbr.roughness, false, 2, 2);
@@ -1147,25 +1429,38 @@ export function createPronteraMaterials(
   trackTex(metalPbr.normal, false, 2, 2);
   trackTex(metalPbr.roughness, false, 2, 2);
 
-  const oakLeafPbr = createBotanicalFoliageTextures('oak', 1024);
+  const oakLeafPbr = createBotanicalFoliageTextures('oak', leafRes);
   trackTex(oakLeafPbr.map, true);
   trackTex(oakLeafPbr.normal, false);
   oakLeafPbr.map.wrapS = THREE.ClampToEdgeWrapping;
   oakLeafPbr.map.wrapT = THREE.ClampToEdgeWrapping;
 
-  const pineLeafPbr = createBotanicalFoliageTextures('pine', 1024);
+  const pineLeafPbr = createBotanicalFoliageTextures('pine', leafRes);
   trackTex(pineLeafPbr.map, true);
   trackTex(pineLeafPbr.normal, false);
   pineLeafPbr.map.wrapS = THREE.ClampToEdgeWrapping;
   pineLeafPbr.map.wrapT = THREE.ClampToEdgeWrapping;
 
-  const cypressLeafPbr = createBotanicalFoliageTextures('cypress', 1024);
+  const cypressLeafPbr = createBotanicalFoliageTextures('cypress', leafRes);
   trackTex(cypressLeafPbr.map, true);
   trackTex(cypressLeafPbr.normal, false);
   cypressLeafPbr.map.wrapS = THREE.ClampToEdgeWrapping;
   cypressLeafPbr.map.wrapT = THREE.ClampToEdgeWrapping;
 
   const dirtMap = trackTex(createDirtTexture(512), true, 8, 8);
+  const fieldTrailPbr = createFieldTrailPbr(procRes);
+  trackTex(fieldTrailPbr.map, true, 16, 16);
+  trackTex(fieldTrailPbr.normal, false, 16, 16);
+
+  const cliffPbr = createCliffRockPbr(procRes);
+  trackTex(cliffPbr.map, true, 3, 3);
+  trackTex(cliffPbr.normal, false, 3, 3);
+  trackTex(cliffPbr.roughness, false, 3, 3);
+  trackTex(cliffPbr.ao, false, 3, 3);
+
+  const watermelonTex = trackTex(createWatermelonTexture(256), true);
+  const wickerTex = trackTex(createWickerTexture(256), true, 3, 2);
+
   const shadowTex = trackTex(createContactShadowTexture(), true);
   shadowTex.wrapS = THREE.ClampToEdgeWrapping;
   shadowTex.wrapT = THREE.ClampToEdgeWrapping;
@@ -1232,13 +1527,23 @@ export function createPronteraMaterials(
 
   const grassBladeMat = trackMat(
     new THREE.MeshStandardMaterial({
-      color: 0x628f3d,
-      roughness: 0.68,
+      color: 0xd8edb8,
+      roughness: 0.64,
       metalness: 0.02,
       side: THREE.DoubleSide,
     }),
   );
-  applyGrassWindShader(grassBladeMat, weatherUniforms);
+  applyGrassWindShader(grassBladeMat, weatherUniforms, 0.52);
+
+  const tallGrassBladeMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xcfe8a8,
+      roughness: 0.60,
+      metalness: 0.02,
+      side: THREE.DoubleSide,
+    }),
+  );
+  applyGrassWindShader(tallGrassBladeMat, weatherUniforms, 0.92);
 
   const wildflowerMat = trackMat(
     new THREE.MeshStandardMaterial({
@@ -1248,7 +1553,7 @@ export function createPronteraMaterials(
       side: THREE.DoubleSide,
     }),
   );
-  applyGrassWindShader(wildflowerMat, weatherUniforms);
+  applyGrassWindShader(wildflowerMat, weatherUniforms, 0.52);
 
   const dirtPath = trackMat(
     new THREE.MeshStandardMaterial({
@@ -1261,6 +1566,21 @@ export function createPronteraMaterials(
     }),
   );
   dirtPath.userData.pbrKind = 'grassGround';
+
+  const cliffRock = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xd8dcd2,
+      map: cliffPbr.map,
+      normalMap: cliffPbr.normal,
+      normalScale: new THREE.Vector2(1.4, 1.4),
+      roughnessMap: cliffPbr.roughness,
+      aoMap: cliffPbr.ao,
+      aoMapIntensity: 0.85,
+      roughness: 0.9,
+      metalness: 0.04,
+    }),
+  );
+  cliffRock.userData.pbrKind = 'stone';
 
   const plasterTimber = trackMat(
     new THREE.MeshStandardMaterial({
@@ -1338,36 +1658,36 @@ export function createPronteraMaterials(
 
   const waterFountain = trackMat(
     new THREE.MeshPhysicalMaterial({
-      color: 0x0f72a8,
-      emissive: new THREE.Color(0x062d42),
-      emissiveIntensity: 0.34,
+      color: 0x104a66,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0.0,
       normalMap: waterNormalMap,
-      normalScale: new THREE.Vector2(0.75, 0.75),
-      roughness: 0.06,
-      metalness: 0.12,
+      normalScale: new THREE.Vector2(0.82, 0.82),
+      roughness: 0.12,
+      metalness: 0.06,
       transparent: true,
-      opacity: 0.88,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      envMapIntensity: 1.38,
+      opacity: 0.90,
+      clearcoat: 0.55,
+      clearcoatRoughness: 0.14,
+      envMapIntensity: 0.85,
     }),
   );
   applyWaterRippleShader(waterFountain, weatherUniforms, 1.35);
 
   const waterMoat = trackMat(
     new THREE.MeshPhysicalMaterial({
-      color: 0x0d5c8a,
-      emissive: new THREE.Color(0x042336),
-      emissiveIntensity: 0.30,
+      color: 0x0b394f,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0.0,
       normalMap: waterNormalMap,
-      normalScale: new THREE.Vector2(0.85, 0.85),
-      roughness: 0.07,
-      metalness: 0.14,
+      normalScale: new THREE.Vector2(0.92, 0.92),
+      roughness: 0.14,
+      metalness: 0.06,
       transparent: true,
-      opacity: 0.91,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.05,
-      envMapIntensity: 1.35,
+      opacity: 0.93,
+      clearcoat: 0.52,
+      clearcoatRoughness: 0.16,
+      envMapIntensity: 0.82,
     }),
   );
   applyWaterRippleShader(waterMoat, weatherUniforms, 0.90);
@@ -1577,14 +1897,14 @@ export function createPronteraMaterials(
 
   const trunkMat = trackMat(
     new THREE.MeshStandardMaterial({
-      color: 0xb09680,
+      color: 0xe6d4ba,
       map: barkPbr.map,
       normalMap: barkPbr.normal,
       normalScale: new THREE.Vector2(1.2, 1.2),
       roughnessMap: barkPbr.roughness,
       aoMap: barkPbr.ao,
-      aoMapIntensity: 0.8,
-      roughness: 0.94,
+      aoMapIntensity: 0.72,
+      roughness: 0.92,
       metalness: 0.0,
     }),
   );
@@ -1735,14 +2055,117 @@ export function createPronteraMaterials(
     }),
   );
 
+  const foliageBirchMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xf4f0b8,
+      map: oakLeafPbr.map,
+      normalMap: oakLeafPbr.normal,
+      normalScale: new THREE.Vector2(0.85, 0.85),
+      alphaTest: 0.42,
+      side: THREE.DoubleSide,
+      roughness: 0.74,
+      metalness: 0.02,
+    }),
+  );
+  foliageBirchMat.userData.pbrKind = 'foliage';
+  applyWorldWeatherShader(foliageBirchMat, weatherUniforms, {
+    allowPuddles: false,
+    snowAmount: 0.92,
+    wetDarken: 0.25,
+    swayAmp: 0.08,
+    swayHeightOffset: 2.2,
+  });
+
+  const wickerMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xe8d5b7,
+      map: wickerTex,
+      roughness: 0.88,
+      metalness: 0.02,
+    }),
+  );
+  wickerMat.userData.pbrKind = 'wood';
+
+  const appleRedMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xb81d22,
+      roughness: 0.24,
+      clearcoat: 0.75,
+      clearcoatRoughness: 0.18,
+    }),
+  );
+  appleRedMat.userData.pbrKind = 'leather';
+
+  const appleGreenMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0x6ea62c,
+      roughness: 0.26,
+      clearcoat: 0.7,
+      clearcoatRoughness: 0.2,
+    }),
+  );
+  appleGreenMat.userData.pbrKind = 'leather';
+
+  const orangeMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xe67318,
+      roughness: 0.36,
+      clearcoat: 0.45,
+      clearcoatRoughness: 0.28,
+    }),
+  );
+  orangeMat.userData.pbrKind = 'leather';
+
+  const grapeMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0x52215c,
+      roughness: 0.34,
+      clearcoat: 0.52,
+      clearcoatRoughness: 0.25,
+    }),
+  );
+  grapeMat.userData.pbrKind = 'leather';
+
+  const watermelonMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      map: watermelonTex,
+      roughness: 0.28,
+      clearcoat: 0.65,
+      clearcoatRoughness: 0.22,
+    }),
+  );
+  watermelonMat.userData.pbrKind = 'leather';
+
+  const pumpkinMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xc95f18,
+      roughness: 0.62,
+      metalness: 0.02,
+    }),
+  );
+  pumpkinMat.userData.pbrKind = 'wood';
+
+  const pearMat = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xc2b838,
+      roughness: 0.32,
+      clearcoat: 0.55,
+      clearcoatRoughness: 0.22,
+    }),
+  );
+  pearMat.userData.pbrKind = 'leather';
+
   return {
     cobble,
     plazaAccentStone,
     curbStone,
     grass,
     grassBladeMat,
+    tallGrassBladeMat,
     wildflowerMat,
     dirtPath,
+    cliffRock,
     castleWall,
     plasterTimber,
     roofCobalt,
@@ -1770,13 +2193,28 @@ export function createPronteraMaterials(
     foliageOakMat,
     foliagePineMat,
     foliageCypressMat,
+    foliageBirchMat,
     shrubLeafMat,
     shrubFlowerMat,
     trunkMat,
+    wickerMat,
+    appleRedMat,
+    appleGreenMat,
+    orangeMat,
+    grapeMat,
+    watermelonMat,
+    pumpkinMat,
+    pearMat,
     aoSkirt,
     contactShadow,
     cursorRing,
     haloGlowTex,
+    grassPbrMap: grassPbr.map,
+    grassPbrNormal: grassPbr.normal,
+    cliffPbrMap: cliffPbr.map,
+    cliffPbrNormal: cliffPbr.normal,
+    trailPbrMap: fieldTrailPbr.map,
+    trailPbrNormal: fieldTrailPbr.normal,
     createAwningMaterial,
     dispose: () => {
       textures.forEach((t) => t.dispose());

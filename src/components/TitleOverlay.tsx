@@ -55,13 +55,13 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({ onStart }) => {
           className="font-display text-4xl md:text-6xl font-bold tracking-[0.12em] text-[#fdf7e7]"
           style={{ textShadow: '0 3px 16px rgba(10, 15, 24, 0.85)' }}
         >
-          PRONTERA
+          KALDGARD
         </h1>
         <p
           className="mt-1.5 text-sm md:text-base font-medium tracking-wide text-[#e5d8bc]"
           style={{ textShadow: '0 2px 10px rgba(10, 15, 24, 0.9)' }}
         >
-          Královské hlavní město · 3D RPG mapa
+          Královské hlavní město a divoké pláně · 3D RPG
         </p>
       </div>
 

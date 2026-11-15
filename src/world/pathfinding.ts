@@ -4,34 +4,53 @@ import {
   WORLD_COLLIDERS,
 } from './pronteraLayout';
 
-export const NAV_MIN = -108;
-export const NAV_MAX = 108;
+export const NAV_MIN = -134;
+export const NAV_MAX = 134;
 export const NAV_CELL = 2;
-export const NAV_COLS = Math.round((NAV_MAX - NAV_MIN) / NAV_CELL); // 108
+export const NAV_COLS = Math.round((NAV_MAX - NAV_MIN) / NAV_CELL); // 134
 
 export interface Point2D {
   x: number;
   z: number;
 }
 
+export interface NavigationGridOptions {
+  minCoord?: number;
+  maxCoord?: number;
+  cellSize?: number;
+  rects?: RectCollider[];
+  circles?: CircleCollider[];
+  actorRadius?: number;
+  isBlockedFn?: (x: number, z: number) => boolean;
+}
+
 export class NavigationGrid {
   readonly cols: number;
   readonly cellSize: number;
   readonly minCoord: number;
+  readonly maxCoord: number;
   readonly blocked: Uint8Array;
   private readonly rects: RectCollider[];
   private readonly circles: CircleCollider[];
+  private readonly isBlockedFn?: (x: number, z: number) => boolean;
 
   constructor(
-    rects: RectCollider[] = WORLD_COLLIDERS.rects,
-    circles: CircleCollider[] = WORLD_COLLIDERS.circles,
-    actorRadius = 0.65,
+    rectsOrOpts: RectCollider[] | NavigationGridOptions = WORLD_COLLIDERS.rects,
+    circlesArg: CircleCollider[] = WORLD_COLLIDERS.circles,
+    actorRadiusArg = 0.65,
   ) {
-    this.cols = NAV_COLS;
-    this.cellSize = NAV_CELL;
-    this.minCoord = NAV_MIN;
-    this.rects = rects;
-    this.circles = circles;
+    const opts: NavigationGridOptions = Array.isArray(rectsOrOpts)
+      ? { rects: rectsOrOpts, circles: circlesArg, actorRadius: actorRadiusArg }
+      : rectsOrOpts;
+
+    this.minCoord = opts.minCoord ?? NAV_MIN;
+    this.maxCoord = opts.maxCoord ?? NAV_MAX;
+    this.cellSize = opts.cellSize ?? NAV_CELL;
+    this.cols = Math.round((this.maxCoord - this.minCoord) / this.cellSize);
+    this.rects = opts.rects ?? WORLD_COLLIDERS.rects;
+    this.circles = opts.circles ?? WORLD_COLLIDERS.circles;
+    const actorRadius = opts.actorRadius ?? 0.65;
+    this.isBlockedFn = opts.isBlockedFn;
     this.blocked = new Uint8Array(this.cols * this.cols);
 
     for (let gz = 0; gz < this.cols; gz++) {
@@ -46,6 +65,17 @@ export class NavigationGrid {
   }
 
   pointHitsCollider(x: number, z: number, pad = 0.55): boolean {
+    if (
+      x < this.minCoord + 1.5 ||
+      x > this.maxCoord - 1.5 ||
+      z < this.minCoord + 1.5 ||
+      z > this.maxCoord - 1.5
+    ) {
+      return true;
+    }
+    if (this.isBlockedFn && this.isBlockedFn(x, z)) {
+      return true;
+    }
     for (let i = 0; i < this.rects.length; i++) {
       const r = this.rects[i];
       if (
@@ -308,9 +338,11 @@ export class NavigationGrid {
   /**
    * Resolves player collision against all walls, buildings, stalls, and trees with smooth sliding.
    */
-  resolveCollision(x: number, z: number, radius = 0.58): Point2D {
-    let px = Math.max(-105, Math.min(105, x));
-    let pz = Math.max(-105, Math.min(105, z));
+  resolveCollision(x: number, z: number, radius = 0.58, prevX?: number, prevZ?: number): Point2D {
+    const minB = this.minCoord + 3;
+    const maxB = this.maxCoord - 3;
+    let px = Math.max(minB, Math.min(maxB, x));
+    let pz = Math.max(minB, Math.min(maxB, z));
 
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < this.rects.length; i++) {
@@ -328,7 +360,6 @@ export class NavigationGrid {
             px += (dx / dist) * push;
             pz += (dz / dist) * push;
           } else {
-            // Inside rect: push out via nearest edge
             const left = Math.abs(px - r.minX);
             const right = Math.abs(r.maxX - px);
             const top = Math.abs(pz - r.minZ);
@@ -358,6 +389,18 @@ export class NavigationGrid {
             px += minDist;
           }
         }
+      }
+    }
+
+    if (this.isBlockedFn && this.isBlockedFn(px, pz) && prevX !== undefined && prevZ !== undefined) {
+      // Try sliding along X or Z independently before falling back to previous valid point
+      if (!this.isBlockedFn(px, prevZ)) {
+        pz = prevZ;
+      } else if (!this.isBlockedFn(prevX, pz)) {
+        px = prevX;
+      } else {
+        px = prevX;
+        pz = prevZ;
       }
     }
 

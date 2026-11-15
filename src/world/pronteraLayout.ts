@@ -44,7 +44,7 @@ export interface StallSpec {
   rotY: number;
   canopyColor: number;
   accentColor: number;
-  goods: 'potions' | 'fabrics' | 'produce' | 'weapons';
+  goods: 'potions' | 'fabrics' | 'produce' | 'weapons' | 'fruits' | 'orchard' | 'berries';
 }
 
 export interface TreeSpec {
@@ -104,7 +104,7 @@ export const LANDMARKS: LandmarkSpec[] = [
   },
   {
     id: 'castle',
-    name: 'Hrad Prontera',
+    name: 'Hrad Kaldgard',
     subtitle: 'Královská citadela na severu',
     x: 0,
     z: -48,
@@ -112,7 +112,7 @@ export const LANDMARKS: LandmarkSpec[] = [
   },
   {
     id: 'cathedral',
-    name: 'Katedrála Prontera',
+    name: 'Katedrála Kaldgard',
     subtitle: 'Severovýchodní svatyně',
     x: 52,
     z: -36,
@@ -136,7 +136,7 @@ export const LANDMARKS: LandmarkSpec[] = [
   },
   {
     id: 'tavern',
-    name: 'Krčma U Poringa',
+    name: 'Krčma U Zlatého gryfa',
     subtitle: 'Jihovýchodní hostinec a knihovna',
     x: 24,
     z: 29,
@@ -145,7 +145,7 @@ export const LANDMARKS: LandmarkSpec[] = [
   {
     id: 'south_gate',
     name: 'Jižní louky',
-    subtitle: 'Lov Poringů a Lunatiků za jižní branou',
+    subtitle: 'Lov lesních bestií za jižní branou',
     x: 0,
     z: 88,
     facingYaw: 0,
@@ -161,10 +161,10 @@ export const LANDMARKS: LandmarkSpec[] = [
 ];
 
 export const BUILDINGS: BuildingSpec[] = [
-  // Grand Prontera Castle crowning the North Citadel Wall
+  // Grand Kaldgard Castle crowning the North Citadel Wall
   {
     id: 'castle_main',
-    name: 'Hrad Prontera',
+    name: 'Hrad Kaldgard',
     kind: 'castle',
     x: 0,
     z: -74,
@@ -177,7 +177,7 @@ export const BUILDINGS: BuildingSpec[] = [
   // NE Quadrant: Cathedral & Sanctuary Pavilion
   {
     id: 'cathedral_main',
-    name: 'Katedrála Prontera',
+    name: 'Katedrála Kaldgard',
     kind: 'cathedral',
     x: 53,
     z: -53,
@@ -276,7 +276,7 @@ export const BUILDINGS: BuildingSpec[] = [
   // SE Quadrant: Tavern, Library & Cozy Homes
   {
     id: 'tavern_inn',
-    name: 'Krčma U Zlatého Poringa',
+    name: 'Krčma U Zlatého gryfa',
     kind: 'tavern',
     x: 22,
     z: 20,
@@ -360,6 +360,43 @@ export const MARKET_STALLS: StallSpec[] = [
     canopyColor: 0x3b7a57,
     accentColor: 0xf4e3c1,
     goods: 'weapons',
+  },
+  // New Fruit, Citrus, Grape & Melon Orchard Stalls in Market Square & Tavern Lane
+  {
+    id: 'stall_5',
+    x: -29.5,
+    z: 21,
+    rotY: Math.PI / 2,
+    canopyColor: 0xa83232,
+    accentColor: 0xf6e6c4,
+    goods: 'fruits',
+  },
+  {
+    id: 'stall_6',
+    x: -13.5,
+    z: 21,
+    rotY: -Math.PI / 2,
+    canopyColor: 0xc47b27,
+    accentColor: 0xfaf0d7,
+    goods: 'orchard',
+  },
+  {
+    id: 'stall_7',
+    x: -21.5,
+    z: 30,
+    rotY: Math.PI,
+    canopyColor: 0x6b3a75,
+    accentColor: 0xf5e8cf,
+    goods: 'berries',
+  },
+  {
+    id: 'stall_8',
+    x: 16,
+    z: 28,
+    rotY: Math.PI,
+    canopyColor: 0x2f6b4b,
+    accentColor: 0xf4e3c1,
+    goods: 'fruits',
   },
 ];
 
@@ -652,14 +689,17 @@ export function buildColliders(): {
     });
   }
 
-  // 6. Market stalls
+  // 6. Market stalls (respecting rotY swap for east/west facing stalls)
   for (const s of MARKET_STALLS) {
+    const rotated = Math.abs(Math.sin(s.rotY)) > 0.7;
+    const hw = rotated ? 1.55 : 2.3;
+    const hd = rotated ? 2.3 : 1.55;
     rects.push({
       id: s.id,
-      minX: s.x - 2.3,
-      maxX: s.x + 2.3,
-      minZ: s.z - 1.5,
-      maxZ: s.z + 1.5,
+      minX: s.x - hw,
+      maxX: s.x + hw,
+      minZ: s.z - hd,
+      maxZ: s.z + hd,
     });
   }
 
@@ -680,24 +720,24 @@ export const WORLD_COLLIDERS = buildColliders();
 
 export function getDistrictAt(x: number, z: number): string {
   if (Math.abs(x) > 76 || Math.abs(z) > 76) {
-    if (z > 76) return 'Jižní pronterské louky';
+    if (z > 76) return 'Jižní kaldgardské louky';
     if (x > 76) return 'Východní předměstí';
     if (x < -76) return 'Západní předměstí';
     return 'Severní hradní hvozd';
   }
   if (Math.hypot(x, z) <= 18) return 'Centrální kašna';
   if (Math.abs(x) <= 10 && z >= 62) return 'Jižní brána';
-  if (Math.abs(x) <= 10 && z <= -62) return 'Brána Hradu Prontera';
+  if (Math.abs(x) <= 10 && z <= -62) return 'Brána Hradu Kaldgard';
   if (Math.abs(z) <= 10 && x >= 62) return 'Východní brána';
   if (Math.abs(z) <= 10 && x <= -62) return 'Západní brána';
-  if (Math.abs(x) <= 22 && z <= -38) return 'Nádvoří hradu Prontera';
+  if (Math.abs(x) <= 22 && z <= -38) return 'Nádvoří hradu Kaldgard';
   if (x > 36 && z < -10) return 'Katedrální čtvrť';
   if (x > 8 && z < -8) return 'Klášterní zahrady';
   if (x < -36 && z < -10) return 'Cech rytířů';
   if (x < -8 && z < -8) return 'Zbrojnice a kovárna';
   if (x < -8 && z > 8 && x > -38 && z < 38) return 'Velké tržiště';
   if (x < -8 && z > 8) return 'Jihozápadní měšťanská čtvrť';
-  if (x > 8 && z > 8 && x < 38 && z < 38) return 'Krčma U Poringa';
+  if (x > 8 && z > 8 && x < 38 && z < 38) return 'Krčma U Zlatého gryfa';
   if (x > 8 && z > 8) return 'Knihovna a jihovýchodní čtvrť';
-  return 'Královská třída Prontery';
+  return 'Královská třída Kaldgardu';
 }

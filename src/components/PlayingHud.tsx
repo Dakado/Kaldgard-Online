@@ -16,7 +16,9 @@ import {
   HudSnapshot,
   TimeOfDay,
   WeatherMode,
+  ZoneId,
 } from '../scene/PronteraScene';
+import { getPortalsForZone } from '../world/fieldMaps';
 import { LANDMARKS } from '../world/pronteraLayout';
 import { PronteraMinimap } from './PronteraMinimap';
 
@@ -34,6 +36,7 @@ interface PlayingHudProps {
   onToggleMute: () => void;
   onAttack: () => void;
   onSelectLandmark: (id: string) => void;
+  onWarpZone: (zoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => void;
   onMinimapWalk: (x: number, z: number) => void;
 }
 
@@ -69,10 +72,12 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
   onToggleMute,
   onAttack,
   onSelectLandmark,
+  onWarpZone,
   onMinimapWalk,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const expPct = Math.min(100, Math.round((hud.exp / Math.max(1, hud.expNext)) * 100));
+  const activePortals = getPortalsForZone(hud.zoneId);
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none">
@@ -125,17 +130,22 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
         </div>
       )}
 
-      {/* Top-Left Compact District, Swordsman Stats & Minimap Cluster */}
+      {/* Top-Left Compact Zone, District, Stats & Minimap Cluster */}
       <div className="fixed top-4 left-4 pointer-events-auto flex flex-col gap-2 p-2.5 rounded-xl bg-[#131924]/92 border border-[#b99b63]/40 shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
         <div className="flex flex-col gap-1 px-0.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-display text-xs font-bold tracking-wide text-[#f2d68a] truncate max-w-[136px]">
-              {hud.district}
+            <div className="font-display text-xs font-bold tracking-wide text-[#f2d68a] truncate max-w-[138px]">
+              {hud.zoneId === 'prontera' ? hud.district : hud.zoneName}
             </div>
             <div className="font-mono-tabular text-[10px] text-[#b8af9e]">
               {hud.x},{hud.z}
             </div>
           </div>
+          {hud.zoneId !== 'prontera' && (
+            <div className="text-[10px] text-[#b9c6d8] truncate max-w-[165px]">
+              {hud.district}
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2 text-[11px] font-mono-tabular text-[#dfd6c3]">
             <span>Lv.{hud.level}</span>
             <span className="text-[#f2cf70]">{hud.zeny} Z</span>
@@ -149,6 +159,7 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
           </div>
         </div>
         <PronteraMinimap
+          zoneId={hud.zoneId}
           playerX={hud.x}
           playerZ={hud.z}
           camYaw={hud.camYaw}
@@ -201,7 +212,7 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
 
       {/* Collapsible Unified Bottom Control Dock */}
       <div
-        className={`fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[min(1320px,97vw)] pointer-events-auto transition-transform duration-200 ease-out ${
+        className={`fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[min(1360px,97vw)] pointer-events-auto transition-transform duration-200 ease-out ${
           dockCollapsed ? 'translate-y-[calc(100%+16px)]' : 'translate-y-0'
         }`}
       >
@@ -233,31 +244,124 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
         </div>
 
         <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#131924]/94 border border-[#b99b63]/45 shadow-[0_10px_30px_rgba(0,0,0,0.55)]">
-          {/* Quick-Travel Prontera Landmarks (including Jižní brána -> hunting fields!) */}
+          {/* Quick-Travel Landmarks & Portals to 4 Kaldgard Fields */}
           <div className="flex items-center gap-1 overflow-x-auto max-w-full py-0.5">
-            {LANDMARKS.slice(0, 7).map((lm) => {
-              const shortName = lm.name
-                .replace('Centrální kašna', 'Kašna')
-                .replace('Prontera', '')
-                .replace('U Poringa', '')
-                .trim();
-              return (
+            {hud.zoneId === 'prontera' ? (
+              <>
+                {LANDMARKS.slice(0, 5).map((lm) => {
+                  const shortName = lm.name
+                    .replace('Centrální kašna', 'Kašna')
+                    .replace('Velké tržiště', 'Tržiště')
+                    .replace('Cech rytířů', 'Cech')
+                    .replace('Kaldgard', '')
+                    .replace('U Zlatého gryfa', '')
+                    .trim();
+                  return (
+                    <button
+                      key={lm.id}
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={lm.name}
+                      title={lm.name}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onSelectLandmark(lm.id);
+                      }}
+                      className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#ede3cf] hover:text-[#1a140a] hover:bg-[#e2bc62] bg-[#1f293a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      {shortName}
+                    </button>
+                  );
+                })}
+                {activePortals.map((p) => {
+                  const dirShort: Record<string, string> = {
+                    prt_fild08: 'Jih: Louky',
+                    prt_fild06: 'Východ: Údolí',
+                    prt_fild05: 'Západ: Pastviny',
+                    prt_fild01: 'Sever: Hvozd',
+                  };
+                  const shortLabel = dirShort[p.toZone] ?? p.label.split('(')[0].trim();
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={p.label}
+                      title={p.subtitle}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onWarpZone(p.toZone, p.targetX, p.targetZ, p.targetYaw);
+                      }}
+                      className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#c8f7df] hover:text-[#0d1c15] hover:bg-[#5ce0a8] bg-[#18332c] border border-[#38b889]/35 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      {shortLabel}
+                    </button>
+                  );
+                })}
+              </>
+            ) : (
+              <>
                 <button
-                  key={lm.id}
                   type="button"
                   tabIndex={-1}
-                  aria-label={lm.name}
-                  title={lm.name}
                   onClick={(e) => {
                     e.currentTarget.blur();
-                    onSelectLandmark(lm.id);
+                    onWarpZone('prontera');
                   }}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#ede3cf] hover:text-[#1a140a] hover:bg-[#e2bc62] bg-[#1f293a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#1a140a] bg-[#e2bc62] hover:bg-[#f5d47a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
-                  {shortName}
+                  Zpět do Kaldgardu
                 </button>
-              );
-            })}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onSelectLandmark(`${hud.zoneId}_crossroads`);
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#ede3cf] hover:text-[#1a140a] hover:bg-[#e2bc62] bg-[#1f293a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Rozcestí
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onSelectLandmark(`${hud.zoneId}_bridge`);
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#ede3cf] hover:text-[#1a140a] hover:bg-[#e2bc62] bg-[#1f293a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Most
+                </button>
+                {activePortals
+                  .filter((p) => p.toZone !== 'prontera')
+                  .map((p) => {
+                    const shortName = p.label
+                      .replace('Východní kaldgardské údolí', 'Východ')
+                      .replace('Západní kaldgardské pastviny', 'Západ')
+                      .replace('Cesta k Severnímu hvozdu', 'Sever')
+                      .replace('Jižní kaldgardské louky', 'Jih')
+                      .replace('Severní kaldgardský hvozd', 'Sever')
+                      .replace('Portál na Jižní louky', 'Jih');
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        tabIndex={-1}
+                        title={p.subtitle}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onWarpZone(p.toZone, p.targetX, p.targetZ, p.targetYaw);
+                        }}
+                        className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#c8f7df] hover:text-[#0d1c15] hover:bg-[#5ce0a8] bg-[#18332c] border border-[#38b889]/35 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        {shortName}
+                      </button>
+                    );
+                  })}
+              </>
+            )}
           </div>
 
           <div className="hidden lg:block w-px h-6 bg-[#b99b63]/25 shrink-0" />

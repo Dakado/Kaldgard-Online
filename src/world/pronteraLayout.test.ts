@@ -58,11 +58,11 @@ test('solid walls and fountain basin block direct entry and resolveCollision pus
   assert.ok(distFromCenter >= 5.5, `Expected push outside fountain, got ${distFromCenter}`);
 });
 
-test('district lookup returns accurate Czech Prontera district names', () => {
+test('district lookup returns accurate Czech Kaldgard district names', () => {
   assert.equal(getDistrictAt(0, 14), 'Centrální kašna');
-  assert.equal(getDistrictAt(0, -48), 'Nádvoří hradu Prontera');
+  assert.equal(getDistrictAt(0, -48), 'Nádvoří hradu Kaldgard');
   assert.equal(getDistrictAt(52, -36), 'Katedrální čtvrť');
   assert.equal(getDistrictAt(-52, -36), 'Cech rytířů');
   assert.equal(getDistrictAt(-22, 22), 'Velké tržiště');
-  assert.equal(getDistrictAt(0, 95), 'Jižní pronterské louky');
+  assert.equal(getDistrictAt(0, 95), 'Jižní kaldgardské louky');
 });

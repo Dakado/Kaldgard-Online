@@ -5,6 +5,7 @@ export interface WeatherShaderUniforms {
   uWetness: { value: number };
   uSnow: { value: number };
   uLightning: { value: number };
+  uDaylight: { value: number };
 }
 
 export function createWeatherUniforms(): WeatherShaderUniforms {
@@ -13,6 +14,7 @@ export function createWeatherUniforms(): WeatherShaderUniforms {
     uWetness: { value: 0 },
     uSnow: { value: 0 },
     uLightning: { value: 0 },
+    uDaylight: { value: 1.0 },
   };
 }
 
@@ -238,10 +240,11 @@ export function applyWaterRippleShader(
   waveScale = 1.0,
 ): void {
   mat.userData.pbrHandled = true;
-  mat.customProgramCacheKey = () => `prontera-water-hd-v3-${waveScale.toFixed(2)}`;
+  mat.customProgramCacheKey = () => `kaldgard-water-photoreal-v5-${waveScale.toFixed(2)}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWetness = uniforms.uWetness;
+    shader.uniforms.uDaylight = uniforms.uDaylight;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -260,9 +263,10 @@ export function applyWaterRippleShader(
           vec4 wWp = modelMatrix * vec4(transformed, 1.0);
           float t = uTime;
           float s = ${waveScale.toFixed(2)};
-          float w1 = sin(wWp.x * 1.3 * s + wWp.z * 0.8 * s + t * 2.2);
-          float w2 = cos(wWp.z * 1.7 * s - wWp.x * 1.1 * s - t * 1.7);
-          transformed.y += (w1 + w2) * 0.008;
+          float w1 = sin(wWp.x * 0.95 * s + wWp.z * 0.65 * s + t * 1.65);
+          float w2 = cos(wWp.z * 1.35 * s - wWp.x * 0.85 * s - t * 1.30);
+          float w3 = sin((wWp.x - wWp.z) * 2.10 * s + t * 2.35) * 0.45;
+          transformed.y += (w1 + w2 + w3) * 0.009;
         }
         `,
       )
@@ -281,24 +285,21 @@ export function applyWaterRippleShader(
         #include <common>
         uniform float uTime;
         uniform float uWetness;
+        uniform float uDaylight;
         varying vec3 vWaterWorldPos;
         ${GLSL_NOISE_HELPERS}
 
-        // Sharp organic water caustic cellular web (no circular polka-dot blobs!)
+        // Multi-directional physical Gerstner + capillary FBM wave height (zero cellular Voronoi grid!)
         float pronteraWaterWaveHeight(vec2 p, float t) {
-          float h = 0.0;
-          h += pronteraSnoise(p * 0.85 + vec2(t * 0.24, t * 0.16)) * 0.50;
-          h += pronteraSnoise(p * 1.95 + vec2(-t * 0.34, t * 0.29)) * 0.28;
-          h += pronteraSnoise(p * 4.20 + vec2(t * 0.45, -t * 0.42)) * 0.14;
-          h += pronteraSnoise(p * 8.50 + vec2(-t * 0.62, -t * 0.51)) * 0.08;
-          return h;
-        }
-
-        float pronteraCausticFilament(vec2 p, float t) {
-          float n1 = abs(pronteraSnoise(p * 1.25 + vec2(t * 0.22, -t * 0.18)) - 0.5);
-          float n2 = abs(pronteraSnoise(p * 1.65 + vec2(-t * 0.28, t * 0.21)) - 0.5);
-          float web = 1.0 - smoothstep(0.0, 0.13, min(n1, n2));
-          return web * web;
+          vec2 d1 = vec2(0.82, 0.57);
+          vec2 d2 = vec2(-0.64, 0.77);
+          vec2 d3 = vec2(0.36, -0.93);
+          float swell1 = sin(dot(p, d1) * 1.45 + t * 1.42) * 0.30;
+          float swell2 = cos(dot(p, d2) * 2.25 - t * 1.78) * 0.20;
+          float swell3 = sin(dot(p, d3) * 3.60 + t * 2.15) * 0.12;
+          float fbmCap = pronteraFbm(p * 0.62 + vec2(t * 0.14, -t * 0.11)) * 0.26;
+          float micro = pronteraSnoise(p * 2.95 + vec2(-t * 0.28, t * 0.22)) * 0.12;
+          return 0.5 + 0.5 * (swell1 + swell2 + swell3) + (fbmCap - 0.13) + (micro - 0.06);
         }
         `,
       )
@@ -308,39 +309,47 @@ export function applyWaterRippleShader(
         #include <color_fragment>
         {
           float t = uTime;
+          float dayAmt = clamp(uDaylight, 0.0, 1.0);
           vec2 wp = vWaterWorldPos.xz * ${waveScale.toFixed(2)};
           float h = pronteraWaterWaveHeight(wp, t);
-          float caustics = pronteraCausticFilament(wp * 0.85, t);
+          float sediment = pronteraFbm(wp * 0.18 + vec2(3.7, -7.1));
 
-          // Concentric fountain ripple shimmer near central fountain jets
+          // Natural optical water absorption (Beer-Lambert deep emerald-slate to shallow river teal)
+          vec3 abyssDay = vec3(0.035, 0.115, 0.165);
+          vec3 shallowDay = vec3(0.075, 0.225, 0.275);
+          vec3 abyssNight = vec3(0.014, 0.036, 0.056);
+          vec3 shallowNight = vec3(0.024, 0.058, 0.082);
+
+          vec3 abyssCol = mix(abyssNight, abyssDay, dayAmt);
+          vec3 shallowCol = mix(shallowNight, shallowDay, dayAmt);
+
+          float depthMix = clamp(h * 0.52 + sediment * 0.48, 0.0, 1.0);
+          vec3 waterCol = mix(abyssCol, shallowCol, depthMix);
+
+          // Subtle daytime-only subsurface crest scatter (zero in night mode)
+          float crest = smoothstep(0.60, 0.90, h);
+          waterCol += vec3(0.04, 0.13, 0.16) * crest * dayAmt * 0.45;
+
+          // Concentric fountain ripple in central plaza basin
           float rOrigin = length(vWaterWorldPos.xz);
-          float fountainRing = 0.0;
           if (rOrigin < 4.55) {
-            float wave = sin(rOrigin * 10.5 - t * 5.4) * 0.5 + 0.5;
-            fountainRing = pow(wave, 3.0) * 0.22 * (1.0 - smoothstep(2.5, 4.4, rOrigin));
-          }
-
-          // Deep translucent river/basin color gradient + crisp sunlit caustic filaments
-          vec3 abyssCol = diffuseColor.rgb * 0.58 + vec3(0.0, 0.03, 0.06);
-          vec3 shallowCol = diffuseColor.rgb * 1.08 + vec3(0.02, 0.09, 0.12);
-          vec3 waterCol = mix(abyssCol, shallowCol, clamp(h * 0.85 + 0.15, 0.0, 1.0));
-          waterCol += vec3(0.24, 0.52, 0.64) * (caustics * 0.42 + fountainRing);
-
-          // Subtle moat stone-edge shallow turquoise glow
-          float absX = abs(vWaterWorldPos.x);
-          float absZ = abs(vWaterWorldPos.z);
-          float moatEdge = max(
-            min(abs(absX - 77.5), abs(absX - 83.5)),
-            0.0
-          );
-          float moatEdgeZ = min(abs(absZ - 77.5), abs(absZ - 83.5));
-          float bankDist = min(moatEdge, moatEdgeZ);
-          if (rOrigin > 20.0 && bankDist < 0.75) {
-            float foamEdge = (1.0 - smoothstep(0.0, 0.72, bankDist)) * (0.45 + 0.55 * pronteraSnoise(wp * 3.5 + t * 0.4));
-            waterCol = mix(waterCol, vec3(0.56, 0.78, 0.88), foamEdge * 0.45);
+            float wave = sin(rOrigin * 9.5 - t * 4.6) * 0.5 + 0.5;
+            float ring = pow(wave, 2.5) * 0.12 * (1.0 - smoothstep(2.4, 4.4, rOrigin)) * dayAmt;
+            waterCol += vec3(0.08, 0.18, 0.22) * ring;
           }
 
           diffuseColor.rgb = waterCol;
+        }
+        `,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        /* glsl */ `
+        #include <roughnessmap_fragment>
+        {
+          float dayAmt = clamp(uDaylight, 0.0, 1.0);
+          // At night, raise surface roughness to completely prevent sharp specular glints
+          roughnessFactor = mix(0.88, max(roughnessFactor, 0.10), dayAmt);
         }
         `,
       )
@@ -351,7 +360,7 @@ export function applyWaterRippleShader(
         {
           float t = uTime;
           vec2 p = vWaterWorldPos.xz * ${waveScale.toFixed(2)};
-          float eps = 0.08;
+          float eps = 0.09;
           float hC = pronteraWaterWaveHeight(p, t);
           float hX = pronteraWaterWaveHeight(p + vec2(eps, 0.0), t);
           float hZ = pronteraWaterWaveHeight(p + vec2(0.0, eps), t);
@@ -362,7 +371,7 @@ export function applyWaterRippleShader(
           // Concentric fountain jet ripples in normal space
           float rOrigin = length(vWaterWorldPos.xz);
           if (rOrigin < 4.55 && rOrigin > 0.25) {
-            float ringSlope = cos(rOrigin * 10.5 - t * 5.4) * 0.38 * (1.0 - smoothstep(1.8, 4.4, rOrigin));
+            float ringSlope = cos(rOrigin * 9.5 - t * 4.6) * 0.28 * (1.0 - smoothstep(1.8, 4.4, rOrigin));
             vec2 dir = vWaterWorldPos.xz / rOrigin;
             dHx += dir.x * ringSlope;
             dHz += dir.y * ringSlope;
@@ -371,13 +380,13 @@ export function applyWaterRippleShader(
           if (uWetness > 0.01) {
             vec2 rp = p * 1.9;
             float distR = length(fract(rp) - 0.5);
-            float rainRing = sin(distR * 32.0 - t * 14.0) * (1.0 - smoothstep(0.15, 0.48, distR)) * 0.28 * uWetness;
+            float rainRing = sin(distR * 32.0 - t * 14.0) * (1.0 - smoothstep(0.15, 0.48, distR)) * 0.22 * uWetness;
             dHx += rainRing;
             dHz -= rainRing;
           }
 
-          // Transform world-space wave gradient cleanly into view space!
-          vec3 worldGrad = vec3(dHx * 0.28, 0.0, dHz * 0.28);
+          // Transform world-space wave gradient cleanly into view space
+          vec3 worldGrad = vec3(dHx * 0.34, 0.0, dHz * 0.34);
           vec3 viewPerturb = (viewMatrix * vec4(worldGrad, 0.0)).xyz;
           normal = normalize(normal + viewPerturb);
         }
@@ -388,10 +397,16 @@ export function applyWaterRippleShader(
         /* glsl */ `
         #include <aomap_fragment>
         {
-          // Physical Schlick Fresnel sky/environment grazing reflection + bank contact AO
+          float dayAmt = clamp(uDaylight, 0.0, 1.0);
+          // Physical Schlick Fresnel sky reflection during day, strictly ZERO reflections in night mode!
           float wDotNV = saturate(dot(geometryNormal, geometryViewDir));
-          float wFresnel = mix(0.02, 1.0, pow(1.0 - wDotNV, 5.0));
-          reflectedLight.indirectSpecular *= mix(0.72, 1.55, wFresnel);
+          float wFresnel = mix(0.04, 0.92, pow(1.0 - wDotNV, 4.0));
+          reflectedLight.directSpecular *= dayAmt * 0.72;
+          reflectedLight.indirectSpecular *= mix(0.45, 1.15, wFresnel) * dayAmt;
+          #ifdef USE_CLEARCOAT
+            clearcoatSpecularDirect *= dayAmt * 0.65;
+            clearcoatSpecularIndirect *= dayAmt * 0.75;
+          #endif
 
           float rOrig = length(vWaterWorldPos.xz);
           float bankAO = 1.0;
@@ -413,9 +428,10 @@ export function applyWaterRippleShader(
 export function applyGrassWindShader(
   mat: THREE.MeshStandardMaterial,
   uniforms: WeatherShaderUniforms,
+  heightScale = 0.52,
 ): void {
   mat.userData.pbrHandled = true;
-  mat.customProgramCacheKey = () => 'prontera-grass-blades-v3';
+  mat.customProgramCacheKey = () => `prontera-grass-blades-v4-${heightScale.toFixed(2)}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWetness = uniforms.uWetness;
@@ -435,7 +451,7 @@ export function applyGrassWindShader(
         '#include <begin_vertex>',
         /* glsl */ `
         #include <begin_vertex>
-        vBladeHeight = clamp(position.y / 0.52, 0.0, 1.0);
+        vBladeHeight = clamp(position.y / ${heightScale.toFixed(2)}, 0.0, 1.0);
         vec4 gWp = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
           gWp = instanceMatrix * gWp;
@@ -444,8 +460,9 @@ export function applyGrassWindShader(
         float wind1 = sin(uTime * 2.3 + gWp.x * 0.28 + gWp.z * 0.22);
         float wind2 = sin(uTime * 4.7 + gWp.x * 0.72 - gWp.z * 0.61) * 0.4;
         float bend = vBladeHeight * vBladeHeight;
-        transformed.x += (wind1 + wind2) * 0.14 * bend;
-        transformed.z += cos(uTime * 1.9 + gWp.z * 0.31) * 0.09 * bend;
+        float swayDist = ${heightScale > 0.65 ? '0.22' : '0.14'};
+        transformed.x += (wind1 + wind2) * swayDist * bend;
+        transformed.z += cos(uTime * 1.9 + gWp.z * 0.31) * (swayDist * 0.65) * bend;
         vBladeWorldPos = gWp.xyz;
         `,
       );
@@ -466,10 +483,11 @@ export function applyGrassWindShader(
         '#include <color_fragment>',
         /* glsl */ `
         #include <color_fragment>
-        float aoRoot = mix(0.42, 1.12, smoothstep(0.0, 0.85, vBladeHeight));
-        diffuseColor.rgb *= aoRoot;
+        vec3 rootTint = diffuseColor.rgb * vec3(0.58, 0.68, 0.52);
+        vec3 tipTint = diffuseColor.rgb * vec3(1.18, 1.24, 0.96);
+        diffuseColor.rgb = mix(rootTint, tipTint, smoothstep(0.0, 0.92, vBladeHeight));
         if (uWetness > 0.01) {
-          diffuseColor.rgb *= mix(1.0, 0.76, uWetness);
+          diffuseColor.rgb *= mix(1.0, 0.78, uWetness);
         }
         if (uSnow > 0.01) {
           float frost = smoothstep(0.42, 0.98, vBladeHeight) * uSnow * (0.45 + 0.35 * pronteraSnoise(vBladeWorldPos.xz * 0.9));
@@ -481,7 +499,7 @@ export function applyGrassWindShader(
         '#include <roughnessmap_fragment>',
         /* glsl */ `
         #include <roughnessmap_fragment>
-        roughnessFactor = mix(0.84, 0.48, vBladeHeight);
+        roughnessFactor = mix(0.82, 0.46, vBladeHeight);
         if (uWetness > 0.01) {
           roughnessFactor = mix(roughnessFactor, 0.18, uWetness * vBladeHeight);
         }
@@ -491,7 +509,7 @@ export function applyGrassWindShader(
         '#include <aomap_fragment>',
         /* glsl */ `
         #include <aomap_fragment>
-        float bladeAO = mix(0.45, 1.0, smoothstep(0.0, 0.72, vBladeHeight));
+        float bladeAO = mix(0.68, 1.08, smoothstep(0.0, 0.75, vBladeHeight));
         reflectedLight.indirectDiffuse *= bladeAO;
         reflectedLight.indirectSpecular *= bladeAO;
         `,
