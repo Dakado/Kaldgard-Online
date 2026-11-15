@@ -663,20 +663,20 @@ export function applyAdvancedPbrShader(
             sheenSpecularIndirect *= pbrAO;
           #endif
 
-          // Realistic Atmospheric Grazing Fresnel & Sun Micro-Glint Reflections
-          float pbrFresnel = pow(max(0.0001, 1.0 - pbrDotNV), 4.0);
+          // Realistic Atmospheric Grazing Fresnel & Sun Micro-Glint Reflections (bloom-safe calibrated)
+          float pbrFresnel = pow(max(0.0001, 1.0 - pbrDotNV), 4.2);
           float glossMask = 1.0 - smoothstep(0.18, 0.96, material.roughness);
-          float reflectGain = (uPbrParams2.x + uWetness * 0.24) * glossMask * pbrSpecOcc;
+          float reflectGain = (uPbrParams2.x + uWetness * 0.22) * glossMask * pbrSpecOcc;
           vec3 skyBounce = mix(uGroundColor, uSkyColor, saturate(vPbrWorldNormal.y * 0.5 + 0.5));
-          reflectedLight.indirectSpecular += skyBounce * pbrFresnel * reflectGain * 0.42;
+          reflectedLight.indirectSpecular += skyBounce * pbrFresnel * reflectGain * 0.24;
 
           vec3 sunViewDir = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
           vec3 halfVec = normalize(sunViewDir + geometryViewDir);
           float ndh = saturate(dot(geometryNormal, halfVec));
-          float specPow = mix(24.0, 128.0, 1.0 - material.roughness);
-          float glintMask = max(pbrRidge * uPbrParams1.w, pSnowMask * 0.35 + uWetness * 0.18);
+          float specPow = mix(24.0, 112.0, 1.0 - material.roughness);
+          float glintMask = max(pbrRidge * uPbrParams1.w, pSnowMask * 0.30 + uWetness * 0.16);
           float microGlint = pow(max(0.0001, ndh), specPow) * glintMask * pbrSpecOcc;
-          reflectedLight.directSpecular += uSunColor * microGlint * 0.36;
+          reflectedLight.directSpecular += uSunColor * microGlint * 0.12;
 
           reflectedLight.directDiffuse *= uMoodContrast;
         }
@@ -777,8 +777,8 @@ export function createDiabloEnvironmentRig(renderer: THREE.WebGLRenderer): Diabl
             ? mix(uHorizon, uZenith, pow(y, 0.55))
             : mix(uHorizon * 0.55, uGround, pow(-y, 0.45));
           float sunDot = max(0.0, dot(vDir, uSunDir));
-          float sunHalo = pow(sunDot, 10.0) * 0.65 * uSunSize;
-          float sunCore = pow(sunDot, 120.0) * 4.5 * uSunSize;
+          float sunHalo = pow(sunDot, 10.0) * 0.45 * uSunSize;
+          float sunCore = pow(sunDot, 120.0) * 1.45 * uSunSize;
           vec3 col = sky + uSunColor * (sunHalo + sunCore);
           gl_FragColor = vec4(col, 1.0);
         }
@@ -860,16 +860,18 @@ export function upgradeSceneMaterialsToAdvancedPBR(
           | WorldWeatherShaderOptions
           | undefined;
 
-        if (kind === 'metal') {
-          mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.55);
-        } else if (kind === 'roof') {
-          mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.18);
-        } else if (kind === 'stone') {
-          mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.08);
-        } else if (kind === 'leather') {
-          mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.12);
-        } else {
-          mat.envMapIntensity = Math.max(mat.envMapIntensity, 0.92);
+        if (!mat.userData?.lockEnvIntensity) {
+          if (kind === 'metal') {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.55);
+          } else if (kind === 'roof') {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.18);
+          } else if (kind === 'stone') {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.08);
+          } else if (kind === 'leather') {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity, 1.12);
+          } else {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity, 0.92);
+          }
         }
 
         applyAdvancedPbrShader(mat, pbrUniforms, weatherUniforms, kind, weatherOpts);

@@ -33,6 +33,12 @@ export interface PortalSpec {
   color: number;
 }
 
+export interface TerraceAscentSample {
+  x: number;
+  z: number;
+  progress: number; // 0 at meadow foot, 1 at plateau top
+}
+
 export interface TerraceHillSpec {
   cx: number;
   cz: number;
@@ -41,6 +47,8 @@ export interface TerraceHillSpec {
   height: number;
   rot?: number;
   flatTop?: number; // 0..1 fraction of radius that stays plateau-flat before cliff drop
+  entryAngle?: number;
+  ascentSamples?: TerraceAscentSample[];
 }
 
 export interface WaterCoveSpec {
@@ -56,6 +64,8 @@ export interface BridgeSpec {
   length: number;
   width: number;
   rotY: number;
+  deckBaseY?: number;
+  archRise?: number;
 }
 
 export interface BoulderSpec {
@@ -63,7 +73,7 @@ export interface BoulderSpec {
   z: number;
   scale: number;
   rotY: number;
-  kind: 'cliff' | 'mossy';
+  kind: 'cliff' | 'mossy' | 'rim';
 }
 
 export interface FieldTreeSpec extends Omit<TreeSpec, 'kind'> {
@@ -195,20 +205,54 @@ function computeTrailMinDist(x: number, z: number, trails: [number, number][][])
   return Math.sqrt(minSq);
 }
 
+export function getBridgeLocalCoords(
+  b: BridgeSpec,
+  x: number,
+  z: number,
+): { lx: number; lz: number } {
+  const cos = Math.cos(-b.rotY);
+  const sin = Math.sin(-b.rotY);
+  const dx = x - b.x;
+  const dz = z - b.z;
+  return {
+    lx: dx * cos - dz * sin,
+    lz: dx * sin + dz * cos,
+  };
+}
+
+export function getBridgeDeckY(b: BridgeSpec, localX: number): number {
+  const baseY = b.deckBaseY ?? 1.18;
+  const archRise = b.archRise ?? 0.56;
+  const halfW = Math.max(1, b.width * 0.5);
+  const u = Math.min(1, Math.abs(localX) / halfW);
+  return baseY + archRise * (1 - u * u);
+}
+
 function isOnBridge(x: number, z: number, bridges: BridgeSpec[], pad = 0.6): boolean {
   for (let i = 0; i < bridges.length; i++) {
     const b = bridges[i];
-    const cos = Math.cos(-b.rotY);
-    const sin = Math.sin(-b.rotY);
-    const dx = x - b.x;
-    const dz = z - b.z;
-    const lx = dx * cos - dz * sin;
-    const lz = dx * sin + dz * cos;
+    const { lx, lz } = getBridgeLocalCoords(b, x, z);
     if (Math.abs(lx) <= b.width * 0.5 + pad && Math.abs(lz) <= b.length * 0.5 + pad) {
       return true;
     }
   }
   return false;
+}
+
+function getBridgeAt(
+  x: number,
+  z: number,
+  bridges: BridgeSpec[],
+  pad = 0.45,
+): { bridge: BridgeSpec; lx: number; lz: number } | null {
+  for (let i = 0; i < bridges.length; i++) {
+    const b = bridges[i];
+    const { lx, lz } = getBridgeLocalCoords(b, x, z);
+    if (Math.abs(lx) <= b.width * 0.5 + pad && Math.abs(lz) <= b.length * 0.5 + pad) {
+      return { bridge: b, lx, lz };
+    }
+  }
+  return null;
 }
 
 function seededRand(seedInit: number): () => number {
@@ -217,6 +261,162 @@ function seededRand(seedInit: number): () => number {
     s = (s * 1664525 + 1013904223) >>> 0;
     return s / 4294967296;
   };
+}
+
+function catmullRom1D(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+function terracePolarToWorld(
+  t: TerraceHillSpec,
+  normR: number,
+  angle: number,
+): [number, number] {
+  const lx = Math.cos(angle) * normR * t.rx;
+  const lz = Math.sin(angle) * normR * t.rz;
+  const rot = -(t.rot ?? 0);
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  return [t.cx + lx * cos - lz * sin, t.cz + lx * sin + lz * cos];
+}
+
+function initTerraceAscentPaths(spec: FieldMapSpec): void {
+  for (const t of spec.terraces) {
+    let bestAngle = t.entryAngle ?? Math.atan2(-t.cz, -t.cx);
+    if (t.entryAngle === undefined) {
+      let bestScore = -1e9;
+      for (let k = 0; k < 16; k++) {
+        const ang = (k / 16) * Math.PI * 2;
+        const [bx, bz] = terracePolarToWorld(t, 1.24, ang);
+        const [mx, mz] = terracePolarToWorld(t, 0.92, ang + 0.45);
+        if (Math.abs(bx) > spec.playableExtent - 14 || Math.abs(bz) > spec.playableExtent - 14) continue;
+        if (Math.abs(mx) > spec.playableExtent - 12 || Math.abs(mz) > spec.playableExtent - 12) continue;
+
+        let blocked = false;
+        const wc = spec.cityWallCoord;
+        if (spec.cityWallEdge === 'north' && bz < wc + 12) blocked = true;
+        if (spec.cityWallEdge === 'south' && bz > wc - 12) blocked = true;
+        if (spec.cityWallEdge === 'west' && bx < wc + 12) blocked = true;
+        if (spec.cityWallEdge === 'east' && bx > wc - 12) blocked = true;
+        if (blocked) continue;
+
+        let minWaterDist = 1e9;
+        for (const c of spec.waterCoves) {
+          const r = Math.hypot((bx - c.cx) / c.rx, (bz - c.cz) / c.rz);
+          const rm = Math.hypot((mx - c.cx) / c.rx, (mz - c.cz) / c.rz);
+          minWaterDist = Math.min(minWaterDist, r, rm);
+        }
+        if (minWaterDist < 1.15) continue;
+
+        const dTrail = computeTrailMinDist(bx, bz, spec.trails);
+        const dCenter = Math.hypot(bx, bz);
+        const score = 120 - dTrail * 1.4 - dCenter * 0.25 + Math.min(minWaterDist, 2.5) * 18;
+        if (score > bestScore) {
+          bestScore = score;
+          bestAngle = ang;
+        }
+      }
+    }
+
+    const flatTop = t.flatTop ?? 0.6;
+    const swing1 = t.rx < 32 ? 0.68 : 0.48;
+    const swing2 = t.rx < 32 ? -0.44 : -0.32;
+    const ctrlPts: [number, number][] = [
+      terracePolarToWorld(t, 1.32, bestAngle),
+      terracePolarToWorld(t, 1.06, bestAngle + swing1 * 0.55),
+      terracePolarToWorld(t, 0.88, bestAngle + swing1),
+      terracePolarToWorld(t, 0.68, bestAngle + swing2),
+      terracePolarToWorld(t, flatTop * 0.46, bestAngle + 0.04),
+      terracePolarToWorld(t, 0.06, bestAngle),
+    ];
+
+    const samples: TerraceAscentSample[] = [];
+    const segCount = ctrlPts.length - 1;
+    const stepsPerSeg = 7;
+    const rawPts: [number, number][] = [];
+    for (let s = 0; s < segCount; s++) {
+      const p0 = ctrlPts[Math.max(0, s - 1)];
+      const p1 = ctrlPts[s];
+      const p2 = ctrlPts[s + 1];
+      const p3 = ctrlPts[Math.min(segCount, s + 2)];
+      const subSteps = s === segCount - 1 ? stepsPerSeg : stepsPerSeg;
+      for (let j = 0; j < subSteps; j++) {
+        const u = j / stepsPerSeg;
+        rawPts.push([
+          catmullRom1D(p0[0], p1[0], p2[0], p3[0], u),
+          catmullRom1D(p0[1], p1[1], p2[1], p3[1], u),
+        ]);
+      }
+    }
+    rawPts.push(ctrlPts[ctrlPts.length - 1]);
+
+    let totalLen = 0;
+    const cumLen = [0];
+    for (let i = 1; i < rawPts.length; i++) {
+      totalLen += Math.hypot(rawPts[i][0] - rawPts[i - 1][0], rawPts[i][1] - rawPts[i - 1][1]);
+      cumLen.push(totalLen);
+    }
+    const safeTotal = Math.max(1, totalLen);
+    for (let i = 0; i < rawPts.length; i++) {
+      samples.push({
+        x: rawPts[i][0],
+        z: rawPts[i][1],
+        progress: cumLen[i] / safeTotal,
+      });
+    }
+    t.ascentSamples = samples;
+  }
+}
+
+function queryAscentPathClosest(
+  samples: TerraceAscentSample[],
+  px: number,
+  pz: number,
+): { dist: number; progress: number } {
+  let minSq = 1e9;
+  let bestProg = 0;
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = samples[i];
+    const b = samples[i + 1];
+    const vx = b.x - a.x;
+    const vz = b.z - a.z;
+    const wx = px - a.x;
+    const wz = pz - a.z;
+    const lenSq = vx * vx + vz * vz;
+    const t = lenSq < 1e-6 ? 0 : Math.max(0, Math.min(1, (wx * vx + wz * vz) / lenSq));
+    const cx = a.x + vx * t;
+    const cz = a.z + vz * t;
+    const dSq = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
+    if (dSq < minSq) {
+      minSq = dSq;
+      bestProg = a.progress + (b.progress - a.progress) * t;
+    }
+  }
+  return { dist: Math.sqrt(minSq), progress: bestProg };
+}
+
+function computeAscentTrailMask(spec: FieldMapSpec, x: number, z: number): number {
+  let best = 0;
+  for (let i = 0; i < spec.terraces.length; i++) {
+    const samples = spec.terraces[i].ascentSamples;
+    if (!samples || samples.length < 2) continue;
+    const { dist, progress } = queryAscentPathClosest(samples, x, z);
+    // Keep visual gravel/sand ribbon from meadow entry up to plateau crest rim (fade out near exact center)
+    const endFade = 1 - smoothstep(0.84, 0.96, progress);
+    const startFade = smoothstep(0.0, 0.06, progress);
+    const wobble = Math.sin(x * 0.31 + z * 0.27) * 0.35;
+    const mask = (1 - smoothstep(1.65 + wobble, 3.05 + wobble, dist)) * endFade * startFade;
+    if (mask > best) best = mask;
+  }
+  return best;
 }
 
 function computeRawFieldHeight(spec: FieldMapSpec, x: number, z: number, trailDist: number): number {
@@ -242,8 +442,9 @@ function computeRawFieldHeight(spec: FieldMapSpec, x: number, z: number, trailDi
   const offRoadFactor = smoothstep(spec.trailWidth * 0.45, spec.trailWidth * 1.9, trailDist);
   const rolling = (2.65 + macroWave + microKnolls * (0.35 + 0.65 * offRoadFactor)) * wallProx;
 
-  // Terraced plateaus with rocky cliff escarpments
+  // Terraced plateaus with rocky cliff escarpments + carved winding mountain ascent trails
   let terraceLift = 0;
+  let ascentOverrideAmt = 0;
   for (let i = 0; i < spec.terraces.length; i++) {
     const t = spec.terraces[i];
     const dx = x - t.cx;
@@ -257,20 +458,32 @@ function computeRawFieldHeight(spec: FieldMapSpec, x: number, z: number, trailDi
     const r = Math.hypot(lx, lz) + wobble;
     const flatTop = t.flatTop ?? 0.64;
     // Sharp cliff rise from r=1.02 down to plateau flatTop
-    const ramp = 1 - smoothstep(flatTop, 1.02, r);
+    let ramp = 1 - smoothstep(flatTop, 1.02, r);
+
+    if (t.ascentSamples && t.ascentSamples.length > 1) {
+      const { dist, progress } = queryAscentPathClosest(t.ascentSamples, x, z);
+      const outerCorridor = t.rx < 32 ? 5.6 : 7.0;
+      const innerCorridor = t.rx < 32 ? 2.2 : 2.8;
+      if (dist < outerCorridor) {
+        const pathBlend = 1 - smoothstep(innerCorridor, outerCorridor, dist);
+        const switchbackRamp = smoothstep(0.06, 0.88, progress);
+        ramp = ramp * (1 - pathBlend) + switchbackRamp * pathBlend;
+        ascentOverrideAmt = Math.max(ascentOverrideAmt, pathBlend);
+      }
+    }
+
     if (ramp > 0.001) {
       terraceLift = Math.max(terraceLift, t.height * ramp);
     }
   }
 
-  // Smooth trails gently ramp across terraces so roads stay walkable (zero impassable road cliffs!)
-  const trailFlatten = 1 - smoothstep(spec.trailWidth * 0.65, spec.trailWidth * 2.1, trailDist);
+  // Smooth main roads gently across terraces while preserving winding mountain switchbacks
+  const trailFlatten = (1 - smoothstep(spec.trailWidth * 0.65, spec.trailWidth * 2.0, trailDist)) * (1 - ascentOverrideAmt);
   const effectiveTerrace = terraceLift * (1 - trailFlatten * 0.72);
 
   // Outer perimeter mountain rim beyond playable extent (205..255)
   const edgeDist = Math.max(Math.abs(x), Math.abs(z));
   const rimT = smoothstep(200, 248, edgeDist);
-  // Keep portal corridors open against border wall edge
   let portalNotch = 1;
   for (let i = 0; i < spec.portals.length; i++) {
     const p = spec.portals[i];
@@ -304,7 +517,41 @@ function computeRawFieldHeight(spec: FieldMapSpec, x: number, z: number, trailDi
   if (dSpawn < 16) padFlatten = Math.min(padFlatten, smoothstep(8, 16, dSpawn));
 
   const dryHeight = (rolling * 0.86 + effectiveTerrace + rimHill) * (0.2 + 0.8 * padFlatten);
-  return dryHeight * (1 - waterMask) + -1.75 * waterMask;
+  let height = dryHeight * (1 - waterMask) + -1.75 * waterMask;
+
+  // Grade riverbank bridge approaches smoothly so both bridge ends sit flush with the road & bank
+  for (let i = 0; i < spec.bridges.length; i++) {
+    const b = spec.bridges[i];
+    const { lx, lz } = getBridgeLocalCoords(b, x, z);
+    const halfW = b.width * 0.5;
+    const halfL = b.length * 0.5;
+    const baseY = b.deckBaseY ?? 1.18;
+    const absLx = Math.abs(lx);
+    const absLz = Math.abs(lz);
+
+    if (absLx <= halfW + 16 && absLz <= halfL + 10) {
+      const latFade = 1 - smoothstep(halfL + 1.0, halfL + 9.5, absLz);
+      // Outer bank abutment ramp: brings road & shore cleanly to bridge deck threshold (baseY)
+      const approachFade =
+        smoothstep(halfW - 4.5, halfW - 0.5, absLx) *
+        (1 - smoothstep(halfW + 3.0, halfW + 15.5, absLx));
+      const abutmentMask = latFade * approachFade;
+      if (abutmentMask > 0.001) {
+        height = height * (1 - abutmentMask) + baseY * abutmentMask;
+      }
+
+      // Under central span: keep riverbed cleanly recessed below bridge deck & water surface
+      if (absLx < halfW - 1.5 && absLz < halfL + 2.5) {
+        const spanCenter = 1 - smoothstep(halfW - 7.5, halfW - 1.5, absLx);
+        const spanLat = 1 - smoothstep(halfL - 0.5, halfL + 2.5, absLz);
+        const bedMask = spanCenter * spanLat;
+        const maxAllowed = baseY * (1 - bedMask) + -1.35 * bedMask;
+        height = Math.min(height, maxAllowed);
+      }
+    }
+  }
+
+  return height;
 }
 
 function populateFieldProps(spec: FieldMapSpec, seedOffset: number) {
@@ -312,13 +559,25 @@ function populateFieldProps(spec: FieldMapSpec, seedOffset: number) {
   const trees: FieldTreeSpec[] = [];
   const boulders: BoulderSpec[] = [];
 
-  const isNearPortalOrTrail = (x: number, z: number, trailPad = 5.2, portalPad = 14) => {
+  initTerraceAscentPaths(spec);
+
+  const isNearAscentTrail = (x: number, z: number, pad = 3.2) => {
+    for (const t of spec.terraces) {
+      if (!t.ascentSamples) continue;
+      const { dist } = queryAscentPathClosest(t.ascentSamples, x, z);
+      if (dist < pad) return true;
+    }
+    return false;
+  };
+
+  const isNearPortalOrTrail = (x: number, z: number, trailPad = 4.2, portalPad = 14) => {
     for (const p of spec.portals) {
       if (Math.hypot(x - p.x, z - p.z) < portalPad) return true;
     }
     if (Math.hypot(x - spec.spawnX, z - spec.spawnZ) < 12) return true;
     if (computeTrailMinDist(x, z, spec.trails) < spec.trailWidth + trailPad) return true;
-    if (isOnBridge(x, z, spec.bridges, 4.0)) return true;
+    if (isNearAscentTrail(x, z, trailPad + 1.2)) return true;
+    if (isOnBridge(x, z, spec.bridges, 6.0)) return true;
     return false;
   };
 
@@ -414,10 +673,44 @@ function populateFieldProps(spec: FieldMapSpec, seedOffset: number) {
     boulders.push({
       x,
       z,
-      scale: slope >= 0.32 ? 1.35 + rand() * 1.95 : 0.72 + rand() * 1.25,
+      scale: slope >= 0.32 ? 1.35 + rand() * 1.85 : 0.72 + rand() * 1.15,
       rotY: rand() * Math.PI * 2,
       kind: slope >= 0.32 ? 'cliff' : 'mossy',
     });
+  }
+
+  // 4. Stone-rimmed borders (kamenný lem) flanking each winding mountain ascent path outside the walkable tread
+  for (const t of spec.terraces) {
+    const samples = t.ascentSamples;
+    if (!samples || samples.length < 4) continue;
+    for (let sIdx = 2; sIdx < samples.length - 4; sIdx += 2) {
+      const prev = samples[sIdx - 1];
+      const curr = samples[sIdx];
+      const next = samples[sIdx + 1];
+      const tx = next.x - prev.x;
+      const tz = next.z - prev.z;
+      const tLen = Math.max(0.01, Math.hypot(tx, tz));
+      const nx = -tz / tLen;
+      const nz = tx / tLen;
+      for (const side of [-1, 1]) {
+        const offset = 3.25 + rand() * 0.65;
+        const rx = curr.x + nx * side * offset;
+        const rz = curr.z + nz * side * offset;
+        if (Math.abs(rx) > 200 || Math.abs(rz) > 200) continue;
+        if (isNearCityWall(rx, rz)) continue;
+        if (queryAscentPathClosest(samples, rx, rz).dist < 2.95) continue;
+        if (computeTrailMinDist(rx, rz, spec.trails) < spec.trailWidth + 1.2) continue;
+        const h = computeRawFieldHeight(spec, rx, rz, 99);
+        if (h < 0.05) continue;
+        boulders.push({
+          x: rx,
+          z: rz,
+          scale: 0.44 + rand() * 0.34,
+          rotY: rand() * Math.PI * 2,
+          kind: 'rim',
+        });
+      }
+    }
   }
 
   spec.trees = trees;
@@ -436,7 +729,7 @@ const PRT_FILD08: FieldMapSpec = {
   spawnYaw: 0,
   cityWallEdge: 'north',
   cityWallCoord: -194,
-  trailWidth: 6.4,
+  trailWidth: 4.8,
   trails: [
     // Main winding south road
     [
@@ -503,7 +796,7 @@ const PRT_FILD08: FieldMapSpec = {
     { cx: 150, cz: 0, rx: 22, rz: 48 }, // stream under East bridge!
   ],
   bridges: [
-    { x: 150, z: 0, length: 11, width: 56, rotY: 0 },
+    { x: 150, z: 0, length: 11, width: 56, rotY: 0, deckBaseY: 1.18, archRise: 0.58 },
   ],
   groves: [
     [-58, -135, 34, 24],
@@ -595,7 +888,7 @@ const PRT_FILD06: FieldMapSpec = {
   spawnYaw: Math.PI / 2,
   cityWallEdge: 'west',
   cityWallCoord: -194,
-  trailWidth: 6.2,
+  trailWidth: 4.65,
   trails: [
     [
       [-186, 0],
@@ -641,7 +934,7 @@ const PRT_FILD06: FieldMapSpec = {
     { cx: 52, cz: -4, rx: 18, rz: 54 }, // winding brook crossed at (52, -10)
   ],
   bridges: [
-    { x: 52, z: -10, length: 11, width: 48, rotY: 0 },
+    { x: 52, z: -10, length: 11, width: 48, rotY: 0, deckBaseY: 1.18, archRise: 0.54 },
   ],
   groves: [
     [-128, -56, 36, 28],
@@ -719,7 +1012,7 @@ const PRT_FILD05: FieldMapSpec = {
   spawnYaw: -Math.PI / 2,
   cityWallEdge: 'east',
   cityWallCoord: 194,
-  trailWidth: 6.4,
+  trailWidth: 4.8,
   trails: [
     [
       [186, 0],
@@ -838,7 +1131,7 @@ const PRT_FILD01: FieldMapSpec = {
   spawnYaw: Math.PI,
   cityWallEdge: 'south',
   cityWallCoord: 194,
-  trailWidth: 6.2,
+  trailWidth: 4.65,
   trails: [
     [
       [0, 186],
@@ -984,11 +1277,7 @@ export function zoneTerrainHeightAt(zoneId: ZoneId, x: number, z: number): numbe
   if (zoneId === 'prontera') return groundHeightAt(x, z);
   const spec = FIELD_MAPS[zoneId];
   const tDist = computeTrailMinDist(x, z, spec.trails);
-  const raw = computeRawFieldHeight(spec, x, z, tDist);
-  if (isOnBridge(x, z, spec.bridges, 0.5)) {
-    return Math.min(raw, 0.12);
-  }
-  return raw;
+  return computeRawFieldHeight(spec, x, z, tDist);
 }
 
 export function zoneHeightAt(zoneId: ZoneId, x: number, z: number): number {
@@ -996,8 +1285,9 @@ export function zoneHeightAt(zoneId: ZoneId, x: number, z: number): number {
   const spec = FIELD_MAPS[zoneId];
   const tDist = computeTrailMinDist(x, z, spec.trails);
   const raw = computeRawFieldHeight(spec, x, z, tDist);
-  if (isOnBridge(x, z, spec.bridges, 0.35)) {
-    return Math.max(0.58, raw);
+  const hitBridge = getBridgeAt(x, z, spec.bridges, 0.35);
+  if (hitBridge) {
+    return Math.max(getBridgeDeckY(hitBridge.bridge, hitBridge.lx), raw);
   }
   return raw;
 }
@@ -1006,8 +1296,9 @@ export function zoneTrailMaskAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return 0;
   const spec = FIELD_MAPS[zoneId];
   const d = computeTrailMinDist(x, z, spec.trails);
-  const edgeWobble = Math.sin(x * 0.25 + z * 0.21) * 0.85 + Math.cos(x * 0.43 - z * 0.37) * 0.45;
-  return 1 - smoothstep(spec.trailWidth * 0.55 + edgeWobble, spec.trailWidth * 1.18 + edgeWobble, d);
+  const edgeWobble = Math.sin(x * 0.25 + z * 0.21) * 0.62 + Math.cos(x * 0.43 - z * 0.37) * 0.32;
+  const roadMask = 1 - smoothstep(spec.trailWidth * 0.46 + edgeWobble, spec.trailWidth * 0.96 + edgeWobble, d);
+  return roadMask;
 }
 
 export function zoneWaterDepthAt(zoneId: ZoneId, x: number, z: number): number {
@@ -1039,8 +1330,12 @@ export function isFieldTerrainBlocked(zoneId: Exclude<ZoneId, 'prontera'>, x: nu
   if (Math.abs(x) > lim || Math.abs(z) > lim) return true;
   if (isOnBridge(x, z, spec.bridges, 0.35)) return false;
   if (zoneWaterDepthAt(zoneId, x, z) > 0.08) return true;
-  // Steep rocky cliff ridges block walking unless on a bridge or road pass
-  if (zoneTrailMaskAt(zoneId, x, z) < 0.35 && zoneCliffSlopeAt(zoneId, x, z) > 0.62) {
+  // Steep rocky cliff ridges block walking unless on a bridge, main road, or grassy mountain ascent path
+  if (
+    zoneTrailMaskAt(zoneId, x, z) < 0.25 &&
+    computeAscentTrailMask(spec, x, z) < 0.25 &&
+    zoneCliffSlopeAt(zoneId, x, z) > 0.62
+  ) {
     return true;
   }
   return false;

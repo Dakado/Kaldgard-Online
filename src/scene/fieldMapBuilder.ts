@@ -3,6 +3,8 @@ import {
   FIELD_MAPS,
   FieldMapSpec,
   ZoneId,
+  getBridgeDeckY,
+  getBridgeLocalCoords,
   zoneCliffSlopeAt,
   zoneHeightAt,
   zoneTerrainHeightAt,
@@ -191,21 +193,106 @@ function createTallGrassClumpGeo(): THREE.BufferGeometry {
   return geo;
 }
 
-function createCliffBoulderGeo(): THREE.BufferGeometry {
-  const geo = new THREE.DodecahedronGeometry(1.15, 2);
+function createCliffBoulderGeo(variant: 0 | 1 | 2): THREE.BufferGeometry {
+  const geo = new THREE.IcosahedronGeometry(1.18, 2);
   const pos = geo.attributes.position;
   const v = new THREE.Vector3();
+
+  // Deterministic planar rock cleavage cuts per variant for irregular fractured granite crags
+  const planeSets: [number, number, number, number][][] = [
+    [
+      [0.82, 0.45, 0.34, 0.78],
+      [-0.78, 0.52, -0.35, 0.80],
+      [0.24, 0.90, -0.36, 0.72],
+      [-0.44, 0.30, 0.84, 0.84],
+      [0.52, -0.25, -0.82, 0.82],
+      [-0.25, -0.32, -0.91, 0.86],
+      [0.65, 0.68, -0.34, 0.74],
+    ],
+    [
+      [-0.84, 0.42, 0.32, 0.76],
+      [0.72, 0.56, -0.40, 0.82],
+      [-0.18, 0.94, 0.28, 0.68],
+      [0.36, 0.22, 0.90, 0.84],
+      [-0.58, -0.18, 0.79, 0.82],
+      [0.48, -0.34, -0.80, 0.84],
+      [-0.64, 0.65, -0.40, 0.75],
+    ],
+    [
+      [0.68, 0.54, 0.49, 0.76],
+      [-0.62, 0.64, -0.44, 0.74],
+      [0.12, 0.92, -0.37, 0.70],
+      [-0.86, 0.24, 0.44, 0.84],
+      [0.84, 0.16, -0.52, 0.82],
+      [0.08, -0.28, 0.95, 0.84],
+      [-0.36, 0.32, -0.88, 0.82],
+    ],
+  ];
+  const planes = planeSets[variant];
+  const seedShift = variant * 1.93;
+
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-    const n1 = Math.sin(v.x * 2.6 + v.y * 1.9) * Math.cos(v.z * 2.4);
-    const n2 = Math.cos(v.x * 5.2 - v.z * 4.4) * 0.14;
-    const strata = 1.0 + n1 * 0.18 + n2;
-    v.multiplyScalar(strata);
-    v.y *= 0.78;
+
+    // Asymmetric angular shear + ridge warp
+    const shearX = v.y * (variant === 0 ? 0.22 : variant === 1 ? -0.19 : 0.14);
+    const shearZ = v.y * (variant === 2 ? -0.20 : 0.12);
+    v.x += shearX;
+    v.z += shearZ;
+
+    // Planar cleavage flattening to break any spherical regularity
+    for (let p = 0; p < planes.length; p++) {
+      const [px, py, pz, dist] = planes[p];
+      const d = v.x * px + v.y * py + v.z * pz;
+      if (d > dist) {
+        const excess = d - dist;
+        v.x -= px * excess * 0.82;
+        v.y -= py * excess * 0.82;
+        v.z -= pz * excess * 0.82;
+      }
+    }
+
+    // Fine fracture ribs & stepped angular facets
+    const ridge = Math.sin(v.x * 3.7 + v.z * 2.9 + seedShift) * Math.cos(v.y * 4.1 - v.x * 2.2);
+    v.multiplyScalar(1.0 + ridge * 0.085);
+
+    // Flatten bottom seating so boulders anchor firmly into terrain
+    if (v.y < -0.28) {
+      v.y = -0.28 + (v.y + 0.28) * 0.28;
+    }
+
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   geo.computeVertexNormals();
   return geo;
+}
+
+function applyMetricBoxUVs(
+  geo: THREE.BoxGeometry,
+  sx: number,
+  sy: number,
+  sz: number,
+  tileMeters = 2.4,
+): void {
+  const pos = geo.attributes.position;
+  const norm = geo.attributes.normal;
+  const uv = geo.attributes.uv;
+  if (!pos || !norm || !uv) return;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const nx = Math.abs(norm.getX(i));
+    const ny = Math.abs(norm.getY(i));
+    if (ny >= nx && ny >= Math.abs(norm.getZ(i))) {
+      uv.setXY(i, (x + sx * 0.5) / tileMeters, (z + sz * 0.5) / tileMeters);
+    } else if (nx >= Math.abs(norm.getZ(i))) {
+      uv.setXY(i, (z + sz * 0.5) / tileMeters, (y + sy * 0.5) / tileMeters);
+    } else {
+      uv.setXY(i, (x + sx * 0.5) / tileMeters, (y + sy * 0.5) / tileMeters);
+    }
+  }
+  uv.needsUpdate = true;
 }
 
 /**
@@ -288,7 +375,7 @@ function createFieldTerrainMaterial(
     metalness: 0.02,
   });
   mat.userData.pbrSkip = true;
-  mat.customProgramCacheKey = () => 'kaldgard-field-terrain-splat-v3';
+  mat.customProgramCacheKey = () => 'kaldgard-field-terrain-splat-v4';
 
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uSplatTex = { value: splatTex };
@@ -361,6 +448,15 @@ function createFieldTerrainMaterial(
           v += 0.15 * fNoise2(p);
           return v;
         }
+        vec3 sampleTriplanar(sampler2D tex, vec3 wp, vec3 wn, float sc, float warp) {
+          vec3 w = pow(abs(wn), vec3(3.2));
+          w /= max(0.0001, w.x + w.y + w.z);
+          vec2 wOff = vec2(warp * 0.18, -warp * 0.14);
+          vec3 cx = texture2D(tex, wp.zy * sc + wOff).rgb;
+          vec3 cy = texture2D(tex, wp.xz * sc + wOff).rgb;
+          vec3 cz = texture2D(tex, wp.xy * sc - wOff).rgb;
+          return cx * w.x + cy * w.y + cz * w.z;
+        }
         `,
       )
       .replace(
@@ -371,31 +467,31 @@ function createFieldTerrainMaterial(
 
         vec2 grassUv = vFieldWorldPos.xz * 0.145;
         vec2 grassUv2 = vec2(vFieldWorldPos.x * 0.8 - vFieldWorldPos.z * 0.6, vFieldWorldPos.x * 0.6 + vFieldWorldPos.z * 0.8) * 0.062 + vec2(0.31, 0.67);
-        vec2 trailUv = vFieldWorldPos.xz * 0.19;
-        vec2 trailUv2 = vec2(vFieldWorldPos.x * 0.6 - vFieldWorldPos.z * 0.8, vFieldWorldPos.x * 0.8 + vFieldWorldPos.z * 0.6) * 0.088 + vec2(0.43, 0.19);
-        vec2 cliffUv = vec2(vFieldWorldPos.x + vFieldWorldPos.z, vFieldWorldPos.y * 1.4) * 0.13;
-
-        vec3 grassCol = mix(texture2D(map, grassUv).rgb, texture2D(map, grassUv2).rgb, 0.44);
-        vec3 trailCol = mix(texture2D(uTrailMap, trailUv).rgb, texture2D(uTrailMap, trailUv2).rgb, 0.38);
-        vec3 cliffCol = texture2D(uCliffMap, cliffUv).rgb;
+        vec2 trailUv = vFieldWorldPos.xz * 0.22;
+        vec2 trailUv2 = vec2(vFieldWorldPos.x * 0.6 - vFieldWorldPos.z * 0.8, vFieldWorldPos.x * 0.8 + vFieldWorldPos.z * 0.6) * 0.11 + vec2(0.43, 0.19);
 
         float macroPatch = fFbm(vFieldWorldPos.xz * 0.038);
         float microGrain = fFbm(vFieldWorldPos.xz * 0.65);
+        float cliffWarp = fFbm(vFieldWorldPos.xz * 0.075 + vec2(vFieldWorldPos.y * 0.06));
+
+        vec3 grassCol = mix(texture2D(map, grassUv).rgb, texture2D(map, grassUv2).rgb, 0.44);
+        vec3 trailCol = mix(texture2D(uTrailMap, trailUv).rgb, texture2D(uTrailMap, trailUv2).rgb, 0.34);
+        vec3 cliffCol = sampleTriplanar(uCliffMap, vFieldWorldPos, vFieldWorldNormal, 0.095, cliffWarp);
 
         // Rich photorealistic meadow tint variation + dark humus under tree groves
         grassCol *= mix(vec3(0.84, 0.94, 0.76), vec3(1.10, 1.05, 0.86), macroPatch);
         grassCol = mix(grassCol, grassCol * vec3(0.72, 0.84, 0.68), splat.a * 0.58);
 
-        // Blend stony/cobbled Kaldgard country road with worn gravel shoulders
-        float trailBlend = smoothstep(0.16, 0.68, splat.r + (microGrain - 0.5) * 0.18);
+        // Blend warm sandy forest footpath with scattered stones naturally into meadow grass
+        float trailBlend = smoothstep(0.18, 0.68, splat.r + (microGrain - 0.5) * 0.20);
         float stoneCore = smoothstep(0.42, 0.85, splat.r);
-        vec3 roadAlbedo = mix(trailCol * vec3(0.94, 0.88, 0.78), trailCol * vec3(1.04, 1.02, 0.98), stoneCore);
+        vec3 roadAlbedo = mix(trailCol * vec3(1.02, 0.96, 0.86), trailCol * vec3(1.06, 1.02, 0.94), stoneCore);
         vec3 finalAlbedo = mix(grassCol, roadAlbedo * (0.94 + macroPatch * 0.14), trailBlend);
 
-        // Blend stratified jagged granite cliff rock on slopes & escarpments
+        // Blend organic domain-warped triplanar granite cliff rock on slopes & escarpments
         float slopeRaw = 1.0 - clamp(vFieldWorldNormal.y, 0.0, 1.0);
         float cliffBlend = smoothstep(0.18, 0.52, max(splat.g, slopeRaw * 1.65));
-        finalAlbedo = mix(finalAlbedo, cliffCol * (0.86 + microGrain * 0.28), cliffBlend);
+        finalAlbedo = mix(finalAlbedo, cliffCol * (0.88 + microGrain * 0.24), cliffBlend);
 
         // Wet stony-pebble lakebed & shoreline transition
         float shoreBlend = smoothstep(0.15, 0.78, splat.b);
@@ -425,8 +521,8 @@ function createFieldTerrainMaterial(
         '#include <roughnessmap_fragment>',
         /* glsl */ `
         #include <roughnessmap_fragment>
-        roughnessFactor = mix(0.88, 0.68, trailBlend);
-        roughnessFactor = mix(roughnessFactor, 0.74, cliffBlend);
+        roughnessFactor = mix(0.88, 0.76, trailBlend);
+        roughnessFactor = mix(roughnessFactor, 0.78, cliffBlend);
         roughnessFactor = mix(roughnessFactor, 0.55, shoreBlend);
         if (uWetness > 0.001) {
           roughnessFactor = mix(roughnessFactor, 0.05, fPuddle * uWetness);
@@ -442,9 +538,9 @@ function createFieldTerrainMaterial(
         #ifdef USE_NORMALMAP_TANGENTSPACE
           vec3 fNormGrass = texture2D(normalMap, grassUv).xyz * 2.0 - 1.0;
           vec3 fNormTrail = texture2D(uTrailNormal, trailUv).xyz * 2.0 - 1.0;
-          vec3 fNormCliff = texture2D(uCliffNormal, cliffUv).xyz * 2.0 - 1.0;
-          vec3 mapN = mix(fNormGrass, fNormTrail * vec3(1.15, 1.15, 1.0), trailBlend);
-          mapN = mix(mapN, fNormCliff * vec3(1.30, 1.30, 1.0), cliffBlend);
+          vec3 fNormCliff = sampleTriplanar(uCliffNormal, vFieldWorldPos, vFieldWorldNormal, 0.095, cliffWarp) * 2.0 - 1.0;
+          vec3 mapN = mix(fNormGrass, fNormTrail * vec3(1.12, 1.12, 1.0), trailBlend);
+          mapN = mix(mapN, fNormCliff * vec3(1.25, 1.25, 1.0), cliffBlend);
           mapN.xy *= normalScale;
           normal = normalize(tbn * mapN);
         #endif
@@ -538,41 +634,124 @@ function buildFieldBridges(
 
   for (const b of spec.bridges) {
     const bg = new THREE.Group();
-    bg.position.set(b.x, 0.42, b.z);
+    bg.position.set(b.x, 0, b.z);
     bg.rotation.y = b.rotY;
 
-    const deckGeo = new THREE.BoxGeometry(b.width, 0.32, b.length);
-    const rampGeo = new THREE.BoxGeometry(3.2, 0.24, b.length);
-    const railGeo = new THREE.BoxGeometry(b.width, 0.20, 0.22);
-    const postGeo = new THREE.CylinderGeometry(0.15, 0.19, 1.32, 10);
-    const pilingGeo = new THREE.CylinderGeometry(0.22, 0.26, 2.2, 10);
-    disposables.push(deckGeo, rampGeo, railGeo, postGeo, pilingGeo);
+    const halfW = b.width * 0.5;
+    const baseY = b.deckBaseY ?? 1.18;
+    const plankCount = Math.max(24, Math.round(b.width / 1.55));
+    const plankStep = b.width / plankCount;
+    const plankW = plankStep * 0.94;
 
-    const deck = new THREE.Mesh(deckGeo, mats.oakWood);
-    deck.castShadow = true;
-    deck.receiveShadow = true;
-    bg.add(deck);
+    const plankGeo = new THREE.BoxGeometry(plankW, 0.24, b.length);
+    applyMetricBoxUVs(plankGeo, plankW, 0.24, b.length, 2.6);
 
-    for (const endSign of [-1, 1]) {
-      const ramp = new THREE.Mesh(rampGeo, mats.oakWood);
-      ramp.position.set(endSign * (b.width * 0.5 + 1.4), -0.11, 0);
-      ramp.rotation.z = -endSign * 0.17;
-      ramp.receiveShadow = true;
-      bg.add(ramp);
+    const beamSegs = 12;
+    const beamStep = b.width / beamSegs;
+    const beamLen = Math.hypot(beamStep, 0.25) + 0.14;
+    const beamGeo = new THREE.BoxGeometry(beamLen, 0.34, 0.42);
+    applyMetricBoxUVs(beamGeo, beamLen, 0.34, 0.42, 2.2);
+
+    const railGeo = new THREE.BoxGeometry(beamLen, 0.18, 0.22);
+    applyMetricBoxUVs(railGeo, beamLen, 0.18, 0.22, 2.2);
+
+    const postGeo = new THREE.CylinderGeometry(0.14, 0.18, 1.28, 10);
+    const postCapGeo = new THREE.BoxGeometry(0.34, 0.12, 0.34);
+    const pilingGeo = new THREE.CylinderGeometry(0.24, 0.28, 3.6, 10);
+    const abutmentGeo = new THREE.BoxGeometry(2.8, baseY + 1.8, b.length + 0.6);
+    applyMetricBoxUVs(abutmentGeo, 2.8, baseY + 1.8, b.length + 0.6, 3.0);
+    const kerbGeo = new THREE.BoxGeometry(0.95, 0.22, b.length + 0.85);
+    applyMetricBoxUVs(kerbGeo, 0.95, 0.22, b.length + 0.85, 2.4);
+
+    disposables.push(
+      plankGeo,
+      beamGeo,
+      railGeo,
+      postGeo,
+      postCapGeo,
+      pilingGeo,
+      abutmentGeo,
+      kerbGeo,
+    );
+
+    // Individual arched cross-planks with non-stretched metric timber UVs
+    for (let i = 0; i < plankCount; i++) {
+      const lx = -halfW + (i + 0.5) * plankStep;
+      const yCurr = getBridgeDeckY(b, lx);
+      const yL = getBridgeDeckY(b, lx - 0.5);
+      const yR = getBridgeDeckY(b, lx + 0.5);
+      const slopeRot = Math.atan2(yR - yL, 1.0);
+
+      const plank = new THREE.Mesh(plankGeo, mats.oakWood);
+      plank.position.set(lx, yCurr - 0.12, 0);
+      plank.rotation.z = slopeRot;
+      plank.castShadow = true;
+      plank.receiveShadow = true;
+      bg.add(plank);
     }
 
-    for (const sz of [-b.length * 0.5 + 0.35, b.length * 0.5 - 0.35]) {
-      const rail = new THREE.Mesh(railGeo, mats.darkTimber);
-      rail.position.set(0, 0.90, sz);
-      bg.add(rail);
+    // Arched longitudinal stringer beams + side handrails
+    for (let s = 0; s < beamSegs; s++) {
+      const x0 = -halfW + s * beamStep;
+      const x1 = x0 + beamStep;
+      const xm = (x0 + x1) * 0.5;
+      const y0 = getBridgeDeckY(b, x0);
+      const y1 = getBridgeDeckY(b, x1);
+      const ym = (y0 + y1) * 0.5;
+      const segAngle = Math.atan2(y1 - y0, beamStep);
 
-      for (let px = -b.width * 0.46; px <= b.width * 0.46 + 0.1; px += 4.2) {
+      for (const bz of [-b.length * 0.44, 0, b.length * 0.44]) {
+        const beam = new THREE.Mesh(beamGeo, mats.darkTimber);
+        beam.position.set(xm, ym - 0.34, bz);
+        beam.rotation.z = segAngle;
+        beam.castShadow = true;
+        bg.add(beam);
+      }
+
+      for (const rz of [-b.length * 0.5 + 0.34, b.length * 0.5 - 0.34]) {
+        const topRail = new THREE.Mesh(railGeo, mats.darkTimber);
+        topRail.position.set(xm, ym + 0.96, rz);
+        topRail.rotation.z = segAngle;
+        topRail.castShadow = true;
+        const midRail = new THREE.Mesh(railGeo, mats.darkTimber);
+        midRail.position.set(xm, ym + 0.48, rz);
+        midRail.rotation.z = segAngle;
+        bg.add(topRail, midRail);
+      }
+    }
+
+    // Stone masonry bridge abutments seated cleanly under both riverbanks with flush threshold kerbs
+    for (const endSign of [-1, 1]) {
+      const abut = new THREE.Mesh(abutmentGeo, mats.castleWall);
+      abut.position.set(endSign * (halfW - 0.15), (baseY - 1.8) * 0.5 - 0.18, 0);
+      abut.castShadow = true;
+      abut.receiveShadow = true;
+
+      const kerb = new THREE.Mesh(kerbGeo, mats.curbStone);
+      kerb.position.set(endSign * (halfW + 0.12), baseY - 0.12, 0);
+      kerb.receiveShadow = true;
+      bg.add(abut, kerb);
+    }
+
+    // Railing posts & submerged riverbed timber pilings aligned to the arch
+    const postCount = Math.max(8, Math.round(b.width / 4.4));
+    for (const sz of [-b.length * 0.5 + 0.34, b.length * 0.5 - 0.34]) {
+      for (let pi = 0; pi <= postCount; pi++) {
+        const px = -halfW + (pi / postCount) * b.width;
+        const py = getBridgeDeckY(b, px);
+
         const post = new THREE.Mesh(postGeo, mats.darkTimber);
-        post.position.set(px, 0.54, sz);
+        post.position.set(px, py + 0.54, sz);
         post.castShadow = true;
+
+        const cap = new THREE.Mesh(postCapGeo, mats.curbStone);
+        cap.position.set(px, py + 1.18, sz);
+
         const piling = new THREE.Mesh(pilingGeo, mats.darkTimber);
-        piling.position.set(px, -0.95, sz);
-        bg.add(post, piling);
+        piling.position.set(px, py - 1.85, sz);
+        piling.castShadow = true;
+
+        bg.add(post, cap, piling);
       }
     }
 
@@ -612,13 +791,19 @@ export function buildFieldZoneScene(
   terrainMesh.receiveShadow = true;
   group.add(terrainMesh);
 
-  // Invisible flat raycast plane for silky RO click-to-move
-  const pickGeo = new THREE.PlaneGeometry(spec.playableExtent * 2.1, spec.playableExtent * 2.1);
+  // Displaced invisible raycast mesh following terrain + bridges so click-to-move hits elevated plateaus & bridges without parallax offset
+  const pickGeo = new THREE.PlaneGeometry(spec.playableExtent * 2.1, spec.playableExtent * 2.1, 96, 96);
   pickGeo.rotateX(-Math.PI / 2);
+  const pickPos = pickGeo.attributes.position;
+  for (let i = 0; i < pickPos.count; i++) {
+    const px = pickPos.getX(i);
+    const pz = pickPos.getZ(i);
+    pickPos.setY(i, zoneHeightAt(zoneId, px, pz) + 0.05);
+  }
+  pickGeo.computeVertexNormals();
   disposables.push(pickGeo);
   const pickMat = new THREE.MeshBasicMaterial({ visible: false });
   const groundPickMesh = new THREE.Mesh(pickGeo, pickMat);
-  groundPickMesh.position.y = 0.05;
   group.add(groundPickMesh);
 
   // 2. Water Cove Planes
@@ -634,7 +819,7 @@ export function buildFieldZoneScene(
     waterMeshes.push(wMesh);
   }
 
-  // 3. Timber Bridges & Border Prontera City Wall
+  // 3. Arched Timber Bridges & Border Prontera City Wall
   const bridges = buildFieldBridges(spec, mats);
   disposables.push(...bridges.disposables);
   group.add(bridges.group);
@@ -643,29 +828,61 @@ export function buildFieldZoneScene(
   disposables.push(...borderWall.disposables);
   group.add(borderWall.group);
 
-  // 4. Instanced Cliff Boulders
+  // 4. Multi-Variant Instanced Irregular Fractured Crag Boulders & Trail Kerbstones
   if (spec.boulders.length > 0) {
-    const boulderGeo = createCliffBoulderGeo();
-    disposables.push(boulderGeo);
-    const boulderInst = new THREE.InstancedMesh(boulderGeo, mats.cliffRock, spec.boulders.length);
-    boulderInst.castShadow = true;
-    boulderInst.receiveShadow = true;
-    const dummy = new THREE.Object3D();
-    const col = new THREE.Color();
-    spec.boulders.forEach((b, i) => {
-      const gy = zoneHeightAt(zoneId, b.x, b.z);
-      dummy.position.set(b.x, gy - 0.16 * b.scale, b.z);
-      dummy.rotation.set((i % 3) * 0.14, b.rotY, ((i + 1) % 3) * 0.12);
-      dummy.scale.set(b.scale * 1.12, b.scale * 0.85, b.scale * 1.04);
-      dummy.updateMatrix();
-      boulderInst.setMatrixAt(i, dummy.matrix);
-      col.setHex(b.kind === 'mossy' ? 0xc2ccb8 : 0xd8d5ce);
-      boulderInst.setColorAt(i, col);
+    const boulderGeos = [
+      createCliffBoulderGeo(0),
+      createCliffBoulderGeo(1),
+      createCliffBoulderGeo(2),
+    ];
+    disposables.push(...boulderGeos);
+
+    const buckets: typeof spec.boulders[] = [[], [], []];
+    spec.boulders.forEach((b, idx) => {
+      buckets[idx % 3].push(b);
     });
-    boulderInst.instanceMatrix.needsUpdate = true;
-    if (boulderInst.instanceColor) boulderInst.instanceColor.needsUpdate = true;
-    boulderInst.computeBoundingSphere();
-    group.add(boulderInst);
+
+    const bDummy = new THREE.Object3D();
+    const bCol = new THREE.Color();
+
+    buckets.forEach((list, vIdx) => {
+      if (list.length === 0) return;
+      const bInst = new THREE.InstancedMesh(boulderGeos[vIdx], mats.cliffRock, list.length);
+      bInst.castShadow = true;
+      bInst.receiveShadow = true;
+
+      list.forEach((b, i) => {
+        const gy = zoneHeightAt(zoneId, b.x, b.z);
+        const isRim = b.kind === 'rim';
+        const sy = isRim ? b.scale * 0.54 : b.scale * (0.76 + (i % 3) * 0.14);
+        const sx = isRim ? b.scale * 1.15 : b.scale * (1.06 + ((i + 1) % 3) * 0.12);
+        const sz = isRim ? b.scale * 0.96 : b.scale * (0.98 + ((i + 2) % 3) * 0.10);
+
+        bDummy.position.set(b.x, gy - (isRim ? 0.12 : 0.18) * b.scale, b.z);
+        bDummy.rotation.set(
+          isRim ? (i % 2) * 0.08 : (i % 3) * 0.14,
+          b.rotY,
+          isRim ? ((i + 1) % 2) * 0.08 : ((i + 1) % 3) * 0.12,
+        );
+        bDummy.scale.set(sx, sy, sz);
+        bDummy.updateMatrix();
+        bInst.setMatrixAt(i, bDummy.matrix);
+
+        if (b.kind === 'mossy') {
+          bCol.setHex(0xbcc9b2);
+        } else if (isRim) {
+          bCol.setHex(i % 2 === 0 ? 0xcac1b4 : 0xbdb3a4);
+        } else {
+          bCol.setHex(0xd8d5ce);
+        }
+        bInst.setColorAt(i, bCol);
+      });
+
+      bInst.instanceMatrix.needsUpdate = true;
+      if (bInst.instanceColor) bInst.instanceColor.needsUpdate = true;
+      bInst.computeBoundingSphere();
+      group.add(bInst);
+    });
   }
 
   // 5. Dense Instanced Botanical Trees (Oak, Pine, Birch, Cypress)
@@ -788,6 +1005,18 @@ export function buildFieldZoneScene(
     const trailVal = zoneTrailMaskAt(zoneId, gx, gz);
     if (trailVal > 0.34) continue;
     if (zoneCliffSlopeAt(zoneId, gx, gz) > 0.50) continue;
+
+    // Keep clear of wooden bridge decks & masonry abutments
+    let onBridgeDeck = false;
+    for (let bi = 0; bi < spec.bridges.length; bi++) {
+      const b = spec.bridges[bi];
+      const { lx, lz } = getBridgeLocalCoords(b, gx, gz);
+      if (Math.abs(lx) <= b.width * 0.5 + 4.4 && Math.abs(lz) <= b.length * 0.5 + 2.4) {
+        onBridgeDeck = true;
+        break;
+      }
+    }
+    if (onBridgeDeck) continue;
 
     // Keep clear of city border wall
     if (

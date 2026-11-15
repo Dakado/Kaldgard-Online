@@ -12,10 +12,19 @@ import { PronteraMaterials } from './materials';
 export interface HeroRig {
   root: THREE.Group;
   bodyGroup: THREE.Group;
+  pelvisGroup: THREE.Group;
+  torsoGroup: THREE.Group;
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
+  leftKnee: THREE.Group;
+  rightKnee: THREE.Group;
+  leftAnkle: THREE.Group;
+  rightAnkle: THREE.Group;
   leftArm: THREE.Group;
   rightArm: THREE.Group;
+  leftElbow: THREE.Group;
+  rightElbow: THREE.Group;
+  coatSkirt: THREE.Mesh;
   capePivot: THREE.Group;
   capeGeo: THREE.PlaneGeometry;
   capeBasePositions: Float32Array;
@@ -318,65 +327,220 @@ function addSculptedBeard(
 function buildGreatswordMesh(
   mats: PronteraMaterials,
   leatherMat: THREE.Material,
-  bladeLength = 1.08,
+  bladeLength = 1.16,
 ): THREE.Group {
   const sword = new THREE.Group();
 
   const grip = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.020, 0.023, 0.30, 14),
+    new THREE.CylinderGeometry(0.017, 0.020, 0.29, 12),
     leatherMat,
   );
   grip.castShadow = true;
 
   const pommel = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.034, 1),
+    new THREE.OctahedronGeometry(0.030, 1),
     mats.darkSteel,
   );
-  pommel.scale.set(1.0, 1.35, 0.85);
-  pommel.position.y = -0.175;
+  pommel.scale.set(0.95, 1.45, 0.75);
+  pommel.position.y = -0.165;
 
   const guardCenter = new THREE.Mesh(
-    new THREE.BoxGeometry(0.068, 0.036, 0.044),
+    new THREE.BoxGeometry(0.064, 0.034, 0.042),
     mats.darkSteel,
   );
-  guardCenter.position.y = 0.16;
+  guardCenter.position.y = 0.155;
 
+  // Ornate barbed gothic crossguard quillions
   for (const s of [-1, 1]) {
     const quillon = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.009, 0.015, 0.155, 10),
+      new THREE.CylinderGeometry(0.007, 0.014, 0.165, 8),
       mats.darkSteel,
     );
-    quillon.rotation.z = s * (Math.PI * 0.44);
-    quillon.position.set(s * 0.09, 0.175, 0);
+    quillon.rotation.z = s * (Math.PI * 0.42);
+    quillon.position.set(s * 0.092, 0.175, 0);
     sword.add(quillon);
+
+    const spur = new THREE.Mesh(
+      new THREE.ConeGeometry(0.011, 0.048, 4),
+      mats.darkSteel,
+    );
+    spur.rotation.z = -s * 0.52;
+    spur.position.set(s * 0.062, 0.215, 0);
+    sword.add(spur);
   }
 
-  // Sculpted diamond-section double-edged greatsword blade
+  // Slender dark-forged gothic greatsword blade (zero GPU bloom glare)
   const blade = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.032, 0.044, bladeLength, 4),
-    mats.steelArmor,
+    new THREE.CylinderGeometry(0.024, 0.036, bladeLength, 4),
+    mats.forgedBlade,
   );
   blade.rotation.y = Math.PI / 4;
-  blade.scale.set(1.25, 1.0, 0.22);
-  blade.position.y = 0.16 + bladeLength * 0.5;
+  blade.scale.set(1.22, 1.0, 0.20);
+  blade.position.y = 0.155 + bladeLength * 0.5;
   blade.castShadow = true;
 
   const fuller = new THREE.Mesh(
-    new THREE.BoxGeometry(0.016, bladeLength * 0.78, 0.016),
+    new THREE.BoxGeometry(0.012, bladeLength * 0.78, 0.014),
     mats.darkSteel,
   );
-  fuller.position.y = 0.16 + bladeLength * 0.44;
+  fuller.position.y = 0.155 + bladeLength * 0.44;
 
   const tip = new THREE.Mesh(
-    new THREE.ConeGeometry(0.034, 0.17, 4),
-    mats.steelArmor,
+    new THREE.ConeGeometry(0.026, 0.18, 4),
+    mats.forgedBlade,
   );
   tip.rotation.y = Math.PI / 4;
-  tip.scale.set(1.25, 1.0, 0.22);
-  tip.position.y = 0.16 + bladeLength + 0.085;
+  tip.scale.set(1.22, 1.0, 0.20);
+  tip.position.y = 0.155 + bladeLength + 0.09;
 
   sword.add(grip, pommel, guardCenter, blade, fuller, tip);
   return sword;
+}
+
+/**
+ * Sculpts a dark-fantasy V-chevron fluted gothic steel breastplate with
+ * sharp central sternum ridge, muscular chest bevels, and narrow athletic waist.
+ */
+function createGothicCuirassGeo(): THREE.BufferGeometry {
+  const geo = new THREE.CylinderGeometry(0.195, 0.152, 0.58, 30, 14, false);
+  geo.translate(0, 0.29, 0);
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const t = Math.max(0, Math.min(1, v.y / 0.58)); // 0=waist, 1=collar
+    const angle = Math.atan2(v.x, v.z);
+    const frontFace = Math.max(0, Math.cos(angle));
+    const sideAmt = Math.abs(Math.sin(angle));
+
+    // Heroic V-taper: trim waist (t=0..0.25), broad chest & upper ribcage (t=0.55..0.85), tapered collarbone
+    const widthMul =
+      t < 0.28
+        ? 0.92 + t * 0.25
+        : t < 0.82
+          ? 0.99 + ((t - 0.28) / 0.54) * 0.36
+          : 1.35 - ((t - 0.82) / 0.18) * 0.38;
+    const depthMul =
+      t < 0.25
+        ? 0.72
+        : t < 0.78
+          ? 0.72 + ((t - 0.25) / 0.53) * 0.26
+          : 0.98 - ((t - 0.78) / 0.22) * 0.26;
+
+    v.x *= widthMul;
+    v.z *= depthMul;
+
+    // Prominent central sternum V-keel protruding forward on chest
+    if (v.z > 0.02) {
+      const centerLine = Math.exp(-Math.pow(v.x / 0.075, 2));
+      const chestPeak = Math.sin(Math.min(1, Math.max(0, (t - 0.08) / 0.82)) * Math.PI);
+      v.z += centerLine * chestPeak * 0.052;
+      // Subtle stepped V-chevron flutes descending down front chest
+      const chevronWave = Math.sin((t * 4.5 - Math.abs(v.x) * 6.5) * Math.PI * 2);
+      if (t > 0.22 && t < 0.88 && frontFace > 0.45) {
+        v.z += chevronWave * 0.0065 * frontFace;
+      }
+    }
+
+    // Subtle back spine contour & scapular bevel
+    if (v.z < -0.02) {
+      const spineDip = Math.exp(-Math.pow(v.x / 0.045, 2));
+      v.z += spineDip * 0.015;
+      if (sideAmt > 0.4 && t > 0.45) {
+        v.z -= 0.012 * Math.sin(((t - 0.45) / 0.55) * Math.PI);
+      }
+    }
+
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Creates a jagged tattered front chainmail/cloth tabard apron with irregular frayed bottom strips.
+ */
+function createTatteredApronGeo(width = 0.20, height = 0.54): THREE.BufferGeometry {
+  const segX = 12;
+  const segY = 10;
+  const geo = new THREE.PlaneGeometry(width, height, segX, segY);
+  geo.translate(0, -height * 0.5, 0);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const drop = Math.max(0, Math.min(1, -y / height));
+    const u = x / (width * 0.5); // -1..1
+    // Taper gently inward near top belt and flare subtly below, with sawtooth tattered bottom tips
+    const wMod = (0.76 + drop * 0.34) * x;
+    const shred =
+      drop > 0.72
+        ? -Math.abs(Math.sin(u * Math.PI * 3.5)) * 0.085 * ((drop - 0.72) / 0.28)
+        : 0;
+    const drapeZ = 0.015 * Math.cos(u * Math.PI * 2.0) * drop - drop * drop * 0.025;
+    pos.setXYZ(i, wMod, y + shred, drapeZ);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Sculpts a tapered, slightly curved ribbon-wedge hair strand with a sharp natural tip
+ * and subtle root-to-tip vertex color gradient (darker slate roots into silver-ash ends).
+ */
+function createTaperedHairLockGeo(
+  length: number,
+  baseWidth: number,
+  thickness: number,
+  archOut: number,
+  flareSide: number,
+  curlBack: number,
+): THREE.BufferGeometry {
+  const segX = 4;
+  const segY = 8;
+  const geo = new THREE.BoxGeometry(baseWidth, length, thickness, segX, segY, 1);
+  geo.translate(0, -length * 0.5, 0);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  const rootC = new THREE.Color(0x8e95a1);
+  const midC = new THREE.Color(0xb2b9c4);
+  const tipC = new THREE.Color(0xcbd1da);
+  const tmpC = new THREE.Color();
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const t = Math.max(0, Math.min(1, -y / length)); // 0=root, 1=tip
+    // Smooth taper to pointed lock tip + slight convex blade profile across width
+    const widthProfile = (1 - Math.pow(t, 1.55) * 0.88) * (1 + Math.sin(t * Math.PI) * 0.14);
+    const thickProfile = 1 - Math.pow(t, 1.35) * 0.78;
+    const crownRidge = (1 - Math.min(1, Math.abs(x / (baseWidth * 0.5)))) * 0.008;
+
+    const nx = x * widthProfile + Math.sin(t * Math.PI * 0.75) * flareSide + t * flareSide * 0.35;
+    const nz =
+      z * thickProfile +
+      crownRidge * (z >= 0 ? 1 : -0.4) +
+      Math.sin(t * Math.PI * 0.9) * archOut -
+      t * t * curlBack;
+
+    pos.setXYZ(i, nx, y, nz);
+
+    if (t < 0.38) {
+      tmpC.lerpColors(rootC, midC, t / 0.38);
+    } else {
+      tmpC.lerpColors(midC, tipC, (t - 0.38) / 0.62);
+    }
+    colors[i * 3] = tmpC.r;
+    colors[i * 3 + 1] = tmpC.g;
+    colors[i * 3 + 2] = tmpC.b;
+  }
+
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
@@ -385,364 +549,518 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   root.add(bodyGroup);
 
   const shadowDisc = new THREE.Mesh(
-    new THREE.CircleGeometry(0.72, 32),
+    new THREE.CircleGeometry(0.68, 32),
     mats.contactShadow,
   );
   shadowDisc.rotation.x = -Math.PI / 2;
   shadowDisc.position.y = 0.03;
   root.add(shadowDisc);
 
-  const linenSleeveMat = new THREE.MeshPhysicalMaterial({
-    color: 0x9e9a8f,
-    roughness: 0.86,
-    metalness: 0.02,
-    sheen: 0.48,
-    sheenRoughness: 0.64,
-  });
-  linenSleeveMat.userData.pbrKind = 'cloth';
-
   const trouserMat = new THREE.MeshStandardMaterial({
-    color: 0x32261e,
-    roughness: 0.88,
-    metalness: 0.03,
+    color: 0x2a211b,
+    roughness: 0.90,
+    metalness: 0.02,
   });
   trouserMat.userData.pbrKind = 'cloth';
 
+  const beltLeatherMat = new THREE.MeshPhysicalMaterial({
+    color: 0x6e4429,
+    roughness: 0.50,
+    metalness: 0.08,
+    clearcoat: 0.14,
+    clearcoatRoughness: 0.48,
+  });
+  beltLeatherMat.userData.pbrKind = 'leather';
+
   const darkLeatherMat = new THREE.MeshPhysicalMaterial({
-    color: 0x221a16,
-    roughness: 0.52,
-    metalness: 0.10,
-    clearcoat: 0.18,
-    clearcoatRoughness: 0.46,
+    color: 0x2b1e16,
+    roughness: 0.56,
+    metalness: 0.08,
+    clearcoat: 0.14,
+    clearcoatRoughness: 0.50,
   });
   darkLeatherMat.userData.pbrKind = 'leather';
 
-  const collarCrimsonMat = new THREE.MeshStandardMaterial({
-    color: 0x4b181b,
-    roughness: 0.78,
+  const tatteredClothMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1a212a,
+    roughness: 0.88,
     metalness: 0.04,
+    sheen: 0.32,
+    sheenRoughness: 0.72,
+    side: THREE.DoubleSide,
   });
-  collarCrimsonMat.userData.pbrKind = 'cloth';
+  tatteredClothMat.userData.pbrKind = 'cloth';
 
-  const silverTrimMat = new THREE.MeshStandardMaterial({
-    color: 0x959eaa,
+  const armorTrimMat = new THREE.MeshStandardMaterial({
+    color: 0x9aa4b2,
     roughness: 0.34,
-    metalness: 0.82,
+    metalness: 0.74,
+    envMapIntensity: 0.86,
   });
-  silverTrimMat.userData.pbrKind = 'metal';
+  armorTrimMat.userData.pbrKind = 'metal';
+  armorTrimMat.userData.lockEnvIntensity = true;
 
   const skinMat = new THREE.MeshPhysicalMaterial({
-    color: 0xd9ad8e,
+    color: 0xc99679,
     roughness: 0.56,
     metalness: 0.02,
-    sheen: 0.24,
+    sheen: 0.22,
     sheenRoughness: 0.72,
     sheenColor: new THREE.Color(0xffb599),
   });
   skinMat.userData.pbrKind = 'skin';
 
-  const hairMat = new THREE.MeshStandardMaterial({
-    color: 0x261a13,
-    roughness: 0.70,
-    metalness: 0.06,
+  // Silver-grey / ash layered parted hair with vertex-colored darker slate roots
+  const silverHairMat = new THREE.MeshStandardMaterial({
+    color: 0xd4dae2,
+    vertexColors: true,
+    roughness: 0.62,
+    metalness: 0.08,
   });
-  hairMat.userData.pbrKind = 'cloth';
+  silverHairMat.userData.pbrKind = 'cloth';
 
-  const thighGeo = createMuscleLimbGeo(0.098, 0.088, 0.072, 0.44, 22);
-  const bootShaftGeo = createMuscleLimbGeo(0.082, 0.076, 0.062, 0.40, 22);
+  const stubbleMat = new THREE.MeshStandardMaterial({
+    color: 0x3b312a,
+    roughness: 0.80,
+    metalness: 0.02,
+  });
+  stubbleMat.userData.pbrKind = 'cloth';
+
+  // Articulated Pelvis -> Lower Body + Upper Torso Skeleton Hierarchy (realistic ~1.84m proportions)
+  const pelvisGroup = new THREE.Group();
+  pelvisGroup.position.set(0, 0.94, 0);
+  bodyGroup.add(pelvisGroup);
+
+  const torsoGroup = new THREE.Group();
+  torsoGroup.position.set(0, 0.02, 0); // World y = 0.96
+  pelvisGroup.add(torsoGroup);
+
+  // Articulated Hip -> Knee -> Ankle Legs with Laminated Thigh Tassets, Knee Poleyns & V-Fluted Greaves
+  const thighGeo = createMuscleLimbGeo(0.094, 0.086, 0.068, 0.47, 22);
+  const shinGeo = createMuscleLimbGeo(0.074, 0.070, 0.052, 0.44, 22);
   const bootFootGeo = createSculptedBootFootGeo();
 
   const makeLeg = (side: number) => {
-    const leg = new THREE.Group();
-    leg.position.set(side * 0.125, 0.90, 0);
+    const hip = new THREE.Group();
+    hip.position.set(side * 0.132, 0, 0);
+    hip.rotation.z = side * 0.055; // Grounded shoulder-width warrior stance
+    hip.rotation.y = side * 0.12;  // Slight natural outward toe turn
 
     const thigh = new THREE.Mesh(thighGeo, trouserMat);
     thigh.castShadow = true;
-    leg.add(thigh);
+    hip.add(thigh);
 
+    // 4-lame articulated curved steel thigh tassets wrapping front & outer hip
+    for (let lame = 0; lame < 4; lame++) {
+      const rTop = 0.108 + lame * 0.003;
+      const rBot = 0.112 + lame * 0.003;
+      const tassetPlate = new THREE.Mesh(
+        new THREE.CylinderGeometry(rTop, rBot, 0.068, 16, 1, false, -Math.PI * 0.40, Math.PI * 0.88),
+        mats.gunmetalArmor,
+      );
+      tassetPlate.position.set(side * 0.012, -0.05 - lame * 0.062, 0.008);
+      tassetPlate.rotation.y = side * 0.34;
+      tassetPlate.rotation.z = side * 0.08;
+      tassetPlate.castShadow = true;
+      hip.add(tassetPlate);
+
+      const trimRib = new THREE.Mesh(
+        new THREE.TorusGeometry(rBot, 0.0055, 6, 16, Math.PI * 0.88),
+        armorTrimMat,
+      );
+      trimRib.rotation.x = Math.PI / 2;
+      trimRib.rotation.z = -Math.PI * 0.40 + side * 0.34;
+      trimRib.position.set(side * 0.012, -0.082 - lame * 0.062, 0.008);
+      hip.add(trimRib);
+    }
+
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.47, 0);
+    hip.add(knee);
+
+    // Sculpted pointed gothic knee poleyn + outer wing guard
     const kneeCop = new THREE.Mesh(
-      new THREE.SphereGeometry(0.076, 18, 14),
-      mats.darkSteel,
+      new THREE.SphereGeometry(0.068, 16, 12),
+      mats.gunmetalArmor,
     );
-    kneeCop.scale.set(0.95, 1.0, 1.08);
-    kneeCop.position.set(0, -0.44, 0.012);
+    kneeCop.scale.set(0.95, 1.08, 1.12);
+    kneeCop.position.set(0, 0.01, 0.016);
     kneeCop.castShadow = true;
-    leg.add(kneeCop);
+    knee.add(kneeCop);
 
-    const bootUpper = new THREE.Mesh(bootShaftGeo, darkLeatherMat);
-    bootUpper.position.y = -0.44;
-    bootUpper.castShadow = true;
-    leg.add(bootUpper);
-
-    const cuff = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.088, 0.082, 0.068, 20),
-      darkLeatherMat,
+    const kneeWing = new THREE.Mesh(
+      new THREE.ConeGeometry(0.036, 0.075, 4),
+      armorTrimMat,
     );
-    cuff.position.y = -0.46;
-    leg.add(cuff);
+    kneeWing.rotation.z = -side * 0.65;
+    kneeWing.position.set(side * 0.062, 0.015, 0.006);
+    knee.add(kneeWing);
 
-    const strap = new THREE.Mesh(
-      new THREE.TorusGeometry(0.082, 0.011, 8, 20),
-      silverTrimMat,
+    const shinUnder = new THREE.Mesh(shinGeo, darkLeatherMat);
+    shinUnder.castShadow = true;
+    knee.add(shinUnder);
+
+    // Fluted gothic steel shin greave with flared upper cuff & V-chevron ribs
+    const greave = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.078, 0.056, 0.36, 18, 1, false, -Math.PI * 0.44, Math.PI * 0.88),
+      mats.gunmetalArmor,
     );
-    strap.rotation.x = Math.PI / 2;
-    strap.position.y = -0.50;
-    leg.add(strap);
+    greave.position.set(0, -0.21, 0.008);
+    greave.castShadow = true;
+    knee.add(greave);
 
-    const foot = new THREE.Mesh(bootFootGeo, darkLeatherMat);
-    foot.position.set(0, -0.855, 0.042);
+    const cuffFlare = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.088, 0.074, 0.062, 18, 1, false, -Math.PI * 0.46, Math.PI * 0.92),
+      armorTrimMat,
+    );
+    cuffFlare.position.set(0, -0.045, 0.012);
+    knee.add(cuffFlare);
+
+    // Three stacked V-chevron shin steel ribs
+    for (let rib = 0; rib < 3; rib++) {
+      const ry = -0.13 - rib * 0.085;
+      for (const rs of [-1, 1]) {
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.048, 0.012, 0.014),
+          armorTrimMat,
+        );
+        bar.position.set(rs * 0.022, ry, 0.066 - rib * 0.005);
+        bar.rotation.z = -rs * 0.42;
+        bar.rotation.y = rs * 0.25;
+        knee.add(bar);
+      }
+    }
+
+    const ankle = new THREE.Group();
+    ankle.position.set(0, -0.44, 0);
+    ankle.rotation.z = -side * 0.055; // Keep sabaton soles planted flat on floor
+    knee.add(ankle);
+
+    // Armored steel Sabaton foot
+    const foot = new THREE.Mesh(bootFootGeo, mats.gunmetalArmor);
+    foot.scale.set(0.95, 0.95, 1.06);
+    foot.position.set(0, -0.016, 0.045);
     foot.castShadow = true;
-    leg.add(foot);
+    ankle.add(foot);
 
-    return leg;
+    const toeCap = new THREE.Mesh(
+      new THREE.ConeGeometry(0.042, 0.085, 6),
+      armorTrimMat,
+    );
+    toeCap.rotation.x = Math.PI * 0.5;
+    toeCap.scale.set(1.1, 1.0, 0.55);
+    toeCap.position.set(0, -0.022, 0.125);
+    ankle.add(toeCap);
+
+    return { hip, knee, ankle };
   };
 
-  const leftLeg = makeLeg(-1);
-  const rightLeg = makeLeg(1);
-  bodyGroup.add(leftLeg, rightLeg);
+  const leftLegRig = makeLeg(-1);
+  const rightLegRig = makeLeg(1);
+  const leftLeg = leftLegRig.hip;
+  const rightLeg = rightLegRig.hip;
+  const leftKnee = leftLegRig.knee;
+  const rightKnee = rightLegRig.knee;
+  const leftAnkle = leftLegRig.ankle;
+  const rightAnkle = rightLegRig.ankle;
+  pelvisGroup.add(leftLeg, rightLeg);
 
-  // High-detail sculpted Brigandine Chest Cuirass with ribcage & clavicle anatomy
-  const chestProfile = [
-    new THREE.Vector2(0.0, 0.85),
-    new THREE.Vector2(0.184, 0.85),
-    new THREE.Vector2(0.172, 1.02),
-    new THREE.Vector2(0.198, 1.14),
-    new THREE.Vector2(0.222, 1.26),
-    new THREE.Vector2(0.236, 1.38),
-    new THREE.Vector2(0.146, 1.48),
-    new THREE.Vector2(0.0, 1.48),
-  ];
-  const cuirassGeo = new THREE.LatheGeometry(chestProfile, 34);
-  const cuirass = new THREE.Mesh(cuirassGeo, mats.quiltedLeather);
-  cuirass.scale.set(1.08, 1.0, 0.82);
-  cuirass.castShadow = true;
-  bodyGroup.add(cuirass);
+  // Tattered Central Front Chainmail Apron + Dark Cloth Underskirt Panels (leaves armored legs clearly exposed!)
+  const coatSkirtGeo = createTatteredApronGeo(0.20, 0.54);
+  const coatSkirt = new THREE.Mesh(coatSkirtGeo, mats.chainmail);
+  coatSkirt.position.set(0, -0.02, 0.135);
+  coatSkirt.castShadow = true;
+  pelvisGroup.add(coatSkirt);
 
-  const standCollar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.114, 0.138, 0.085, 24, 1, true),
-    collarCrimsonMat,
-  );
-  standCollar.position.y = 1.49;
-  bodyGroup.add(standCollar);
+  const sideUnderskirtGeo = createTatteredApronGeo(0.28, 0.50);
+  const backClothApron = new THREE.Mesh(sideUnderskirtGeo, tatteredClothMat);
+  backClothApron.position.set(0, -0.02, -0.125);
+  backClothApron.rotation.y = Math.PI;
+  pelvisGroup.add(backClothApron);
 
-  // Cross-chest Baldric & Silver Lion Medallion
-  const baldricCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.17, 1.43, 0.12),
-    new THREE.Vector3(0.0, 1.23, 0.185),
-    new THREE.Vector3(-0.19, 0.96, 0.13),
-    new THREE.Vector3(-0.18, 0.94, -0.15),
-    new THREE.Vector3(0.02, 1.18, -0.185),
-    new THREE.Vector3(0.18, 1.42, -0.11),
-  ]);
-  const baldric = new THREE.Mesh(
-    new THREE.TubeGeometry(baldricCurve, 32, 0.022, 10, true),
-    darkLeatherMat,
-  );
-  baldric.scale.set(1.0, 1.0, 0.85);
-  bodyGroup.add(baldric);
+  const frontClothUnder = new THREE.Mesh(createTatteredApronGeo(0.25, 0.50), tatteredClothMat);
+  frontClothUnder.position.set(0, -0.02, 0.118);
+  pelvisGroup.add(frontClothUnder);
 
-  const chestMedallion = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.058, 0.058, 0.024, 24),
-    mats.steelArmor,
-  );
-  chestMedallion.rotation.x = Math.PI / 2;
-  chestMedallion.position.set(0, 1.24, 0.184);
-  bodyGroup.add(chestMedallion);
-
-  const medallionRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.056, 0.0085, 10, 24),
-    silverTrimMat,
-  );
-  medallionRing.position.set(0, 1.24, 0.197);
-  bodyGroup.add(medallionRing);
-
-  // Double Belts & Hip Chain
+  // Layered Crossed Brown Leather Waist Belts & Forged Buckles
   const mainBelt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.184, 0.195, 0.075, 28),
-    darkLeatherMat,
+    new THREE.CylinderGeometry(0.162, 0.172, 0.072, 26),
+    beltLeatherMat,
   );
-  mainBelt.scale.set(1.08, 1.0, 0.84);
-  mainBelt.position.y = 0.98;
-  bodyGroup.add(mainBelt);
+  mainBelt.scale.set(1.06, 1.0, 0.78);
+  mainBelt.position.y = 0.085;
+  pelvisGroup.add(mainBelt);
 
-  const beltBuckle = new THREE.Mesh(
-    new THREE.TorusGeometry(0.042, 0.011, 10, 18),
-    mats.steelArmor,
+  const upperBelt = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.158, 0.165, 0.052, 26),
+    beltLeatherMat,
   );
-  beltBuckle.position.set(0.02, 0.98, 0.168);
-  bodyGroup.add(beltBuckle);
+  upperBelt.scale.set(1.06, 1.0, 0.78);
+  upperBelt.position.y = 0.155;
+  pelvisGroup.add(upperBelt);
 
   const subBelt = new THREE.Mesh(
-    new THREE.TorusGeometry(0.185, 0.022, 10, 28),
-    darkLeatherMat,
+    new THREE.TorusGeometry(0.168, 0.020, 8, 26),
+    beltLeatherMat,
   );
-  subBelt.scale.set(1.09, 0.86, 1.0);
-  subBelt.rotation.x = Math.PI / 2 + 0.16;
-  subBelt.rotation.y = -0.14;
-  subBelt.position.y = 0.90;
-  bodyGroup.add(subBelt);
+  subBelt.scale.set(1.07, 0.80, 1.0);
+  subBelt.rotation.x = Math.PI / 2 + 0.20;
+  subBelt.rotation.y = -0.18;
+  subBelt.position.y = 0.01;
+  pelvisGroup.add(subBelt);
 
-  const chainCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.175, 0.95, 0.08),
-    new THREE.Vector3(0.215, 0.78, 0.02),
-    new THREE.Vector3(0.185, 0.84, -0.12),
+  const beltBuckle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.056, 0.054, 0.022),
+    armorTrimMat,
+  );
+  beltBuckle.position.set(-0.02, 0.085, 0.135);
+  pelvisGroup.add(beltBuckle);
+
+  // Sculped Gothic V-Chevron Gunmetal Breastplate + High Armored Gorget in TorsoGroup
+  const cuirassGeo = createGothicCuirassGeo();
+  const cuirass = new THREE.Mesh(cuirassGeo, mats.gunmetalArmor);
+  cuirass.castShadow = true;
+  torsoGroup.add(cuirass);
+
+  // Central protruding V-ridge sternum keel + 3 V-chevron steel ribs
+  const keelCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.50, 0.162),
+    new THREE.Vector3(0, 0.34, 0.202),
+    new THREE.Vector3(0, 0.14, 0.148),
   ]);
-  const hipChain = new THREE.Mesh(
-    new THREE.TubeGeometry(chainCurve, 16, 0.008, 8, false),
-    silverTrimMat,
+  const sternumKeel = new THREE.Mesh(
+    new THREE.TubeGeometry(keelCurve, 12, 0.011, 6, false),
+    armorTrimMat,
   );
-  bodyGroup.add(hipChain);
+  torsoGroup.add(sternumKeel);
 
-  // Split Obsidian Coat Skirt with natural cloth wave folds along hem
-  const coatSkirtGeo = new THREE.CylinderGeometry(
-    0.195,
-    0.34,
-    0.72,
-    36,
-    6,
-    true,
-    Math.PI * 0.22,
-    Math.PI * 1.56,
-  );
-  const cPos = coatSkirtGeo.attributes.position;
-  for (let i = 0; i < cPos.count; i++) {
-    const px = cPos.getX(i);
-    const py = cPos.getY(i);
-    const pz = cPos.getZ(i);
-    const ang = Math.atan2(pz, px);
-    const hemFactor = Math.max(0, (0.36 - py) / 0.72);
-    const fold = Math.sin(ang * 9.0) * 0.024 * hemFactor;
-    const rad = Math.hypot(px, pz);
-    if (rad > 0.05) {
-      cPos.setX(i, px + (px / rad) * fold);
-      cPos.setZ(i, pz + (pz / rad) * fold);
+  for (let vIdx = 0; vIdx < 3; vIdx++) {
+    const vy = 0.24 + vIdx * 0.085;
+    for (const s of [-1, 1]) {
+      const chevron = new THREE.Mesh(
+        new THREE.BoxGeometry(0.135, 0.014, 0.018),
+        armorTrimMat,
+      );
+      chevron.position.set(s * 0.064, vy + 0.038, 0.168 - vIdx * 0.005);
+      chevron.rotation.z = s * 0.50;
+      chevron.rotation.y = -s * 0.36;
+      torsoGroup.add(chevron);
     }
   }
-  coatSkirtGeo.computeVertexNormals();
-  const coatSkirt = new THREE.Mesh(coatSkirtGeo, mats.darkCoat);
-  coatSkirt.scale.set(1.08, 1.0, 0.88);
-  coatSkirt.position.y = 0.60;
-  coatSkirt.castShadow = true;
-  bodyGroup.add(coatSkirt);
 
-  const coatHemTrim = new THREE.Mesh(
-    new THREE.CylinderGeometry(
-      0.335,
-      0.343,
-      0.032,
-      36,
-      1,
-      true,
-      Math.PI * 0.22,
-      Math.PI * 1.56,
-    ),
-    silverTrimMat,
-  );
-  coatHemTrim.scale.set(1.08, 1.0, 0.88);
-  coatHemTrim.position.y = 0.255;
-  bodyGroup.add(coatHemTrim);
-
-  // Layered Articulated Pauldron (Right) & Leather Shoulder Guard (Left)
-  const rightPauldron = new THREE.Group();
-  rightPauldron.position.set(0.245, 1.38, 0);
-  rightPauldron.rotation.z = -0.36;
-
-  for (let lame = 0; lame < 3; lame++) {
-    const r = 0.125 - lame * 0.012;
-    const plate = new THREE.Mesh(
-      new THREE.SphereGeometry(r, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.56),
-      mats.darkSteel,
+  // Dual Round Engraved Circular Collarbone Clasps / Medallions (L/R)
+  for (const s of [-1, 1]) {
+    const claspDisc = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.044, 0.044, 0.022, 20),
+      mats.gunmetalArmor,
     );
-    plate.scale.set(1.06, 0.88, 1.12);
-    plate.position.set(lame * 0.016, -lame * 0.048, 0);
-    plate.castShadow = true;
-    rightPauldron.add(plate);
+    claspDisc.rotation.x = Math.PI / 2 - 0.18;
+    claspDisc.rotation.z = -s * 0.22;
+    claspDisc.position.set(s * 0.118, 0.455, 0.156);
+    torsoGroup.add(claspDisc);
+
+    const claspRim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.044, 0.007, 8, 20),
+      armorTrimMat,
+    );
+    claspRim.rotation.x = -0.18;
+    claspRim.rotation.y = s * 0.22;
+    claspRim.position.set(s * 0.118, 0.455, 0.166);
+    torsoGroup.add(claspRim);
   }
-  const pauldronRim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.118, 0.011, 10, 22),
-    silverTrimMat,
-  );
-  pauldronRim.rotation.x = Math.PI / 2;
-  pauldronRim.position.y = -0.01;
-  rightPauldron.add(pauldronRim);
-  bodyGroup.add(rightPauldron);
 
-  const leftShoulderCap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.105, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.5),
-    darkLeatherMat,
+  // Armored Steel Neck Gorget & Chainmail Cowl Collar
+  const mailGorget = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.118, 0.175, 0.11, 22),
+    mats.chainmail,
   );
-  leftShoulderCap.position.set(-0.235, 1.36, 0);
-  leftShoulderCap.rotation.z = 0.36;
-  leftShoulderCap.castShadow = true;
-  bodyGroup.add(leftShoulderCap);
+  mailGorget.scale.set(1.04, 1.0, 0.84);
+  mailGorget.position.y = 0.56;
+  torsoGroup.add(mailGorget);
 
-  // Articulated Arms with Anatomical Muscle Lathe + Gauntlets & Sculpted Fingers
-  const upperArmGeo = createMuscleLimbGeo(0.068, 0.064, 0.054, 0.26, 20);
-  const vambraceGeo = createMuscleLimbGeo(0.058, 0.055, 0.044, 0.24, 20);
+  const standCollar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.122, 0.145, 0.075, 20, 1, true, Math.PI * 0.18, Math.PI * 1.64),
+    mats.gunmetalArmor,
+  );
+  standCollar.position.y = 0.59;
+  torsoGroup.add(standCollar);
+
+  // Diagonal Back Sword Baldric Strap across chest & back
+  const baldricCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.155, 0.52, 0.115),
+    new THREE.Vector3(0.01, 0.30, 0.165),
+    new THREE.Vector3(-0.165, 0.07, 0.115),
+    new THREE.Vector3(-0.16, 0.06, -0.135),
+    new THREE.Vector3(0.01, 0.28, -0.175),
+    new THREE.Vector3(0.16, 0.51, -0.105),
+  ]);
+  const baldric = new THREE.Mesh(
+    new THREE.TubeGeometry(baldricCurve, 28, 0.018, 8, true),
+    beltLeatherMat,
+  );
+  baldric.scale.set(1.0, 1.0, 0.88);
+  torsoGroup.add(baldric);
+
+  // Symmetrical 4-Lame Winged Gothic Shoulder Pauldrons (L & R)
+  for (const s of [-1, 1]) {
+    const pauldron = new THREE.Group();
+    pauldron.position.set(s * 0.252, 0.505, 0);
+    pauldron.rotation.z = -s * 0.32;
+
+    // Upturned signature gothic inner wing blade rising near collarbone/shoulder
+    const shoulderWing = new THREE.Mesh(
+      new THREE.ConeGeometry(0.058, 0.195, 4),
+      mats.gunmetalArmor,
+    );
+    shoulderWing.scale.set(0.36, 1.0, 1.30);
+    shoulderWing.position.set(-s * 0.052, 0.115, 0);
+    shoulderWing.rotation.z = s * 0.34;
+    shoulderWing.castShadow = true;
+    pauldron.add(shoulderWing);
+
+    // 4 overlapping articulated horizontal curved steel shoulder lames
+    for (let lame = 0; lame < 4; lame++) {
+      const r = 0.136 - lame * 0.011;
+      const plate = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.54),
+        mats.gunmetalArmor,
+      );
+      plate.scale.set(1.10, 0.78, 1.15);
+      plate.position.set(s * lame * 0.016, -lame * 0.044, 0);
+      plate.castShadow = true;
+      pauldron.add(plate);
+
+      const lameRim = new THREE.Mesh(
+        new THREE.TorusGeometry(r * 0.98, 0.0065, 6, 20),
+        armorTrimMat,
+      );
+      lameRim.rotation.x = Math.PI / 2;
+      lameRim.position.set(s * lame * 0.016, -lame * 0.044 - 0.008, 0);
+      pauldron.add(lameRim);
+    }
+    torsoGroup.add(pauldron);
+  }
+
+  // Articulated Chainmail Sleeves + Flared Winged Gothic Vambraces & Gauntlets
+  const upperArmGeo = createMuscleLimbGeo(0.066, 0.062, 0.050, 0.29, 18);
+  const vambraceGeo = createMuscleLimbGeo(0.060, 0.055, 0.042, 0.26, 18);
 
   const makeArm = (side: number) => {
-    const arm = new THREE.Group();
-    arm.position.set(side * 0.245, 1.34, 0);
+    const shoulder = new THREE.Group();
+    shoulder.position.set(side * 0.262, 0.460, 0);
 
-    const sleeve = new THREE.Mesh(upperArmGeo, linenSleeveMat);
+    const sleeve = new THREE.Mesh(upperArmGeo, mats.chainmail);
     sleeve.castShadow = true;
-    arm.add(sleeve);
+    shoulder.add(sleeve);
 
-    const elbow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.064, 18, 14),
-      mats.darkSteel,
+    const armStrap = new THREE.Mesh(
+      new THREE.TorusGeometry(0.058, 0.010, 6, 16),
+      beltLeatherMat,
     );
-    elbow.scale.set(1.0, 1.0, 1.14);
-    elbow.position.set(0, -0.265, -0.008);
-    elbow.castShadow = true;
-    arm.add(elbow);
+    armStrap.rotation.x = Math.PI / 2;
+    armStrap.position.y = -0.18;
+    shoulder.add(armStrap);
 
-    const vambrace = new THREE.Mesh(vambraceGeo, mats.darkSteel);
-    vambrace.position.y = -0.27;
+    const elbow = new THREE.Group();
+    elbow.position.set(0, -0.29, 0);
+    shoulder.add(elbow);
+
+    // Pointed winged gothic elbow/forearm vambrace fin (signature silhouette from reference)
+    const elbowFin = new THREE.Mesh(
+      new THREE.ConeGeometry(0.046, 0.175, 4),
+      mats.gunmetalArmor,
+    );
+    elbowFin.scale.set(0.32, 1.0, 1.15);
+    elbowFin.position.set(side * 0.045, 0.045, -0.012);
+    elbowFin.rotation.z = -side * 0.34;
+    elbowFin.castShadow = true;
+    elbow.add(elbowFin);
+
+    const couter = new THREE.Mesh(
+      new THREE.SphereGeometry(0.058, 16, 12),
+      mats.gunmetalArmor,
+    );
+    couter.scale.set(1.0, 1.0, 1.12);
+    couter.position.set(0, 0, -0.006);
+    couter.castShadow = true;
+    elbow.add(couter);
+
+    const vambrace = new THREE.Mesh(vambraceGeo, mats.gunmetalArmor);
     vambrace.castShadow = true;
-    arm.add(vambrace);
+    elbow.add(vambrace);
 
-    addSculptedHand(arm, -0.53, darkLeatherMat, skinMat, mats.darkSteel, 1.02);
-    return arm;
+    const wristStrap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.048, 0.044, 0.055, 14),
+      beltLeatherMat,
+    );
+    wristStrap.position.y = -0.21;
+    elbow.add(wristStrap);
+
+    addSculptedHand(elbow, -0.27, mats.gunmetalArmor, mats.darkSteel, armorTrimMat, 0.98);
+    return { shoulder, elbow };
   };
 
-  const leftArm = makeArm(-1);
-  const rightArm = makeArm(1);
-  bodyGroup.add(leftArm, rightArm);
+  const leftArmRig = makeArm(-1);
+  const rightArmRig = makeArm(1);
+  const leftArm = leftArmRig.shoulder;
+  const rightArm = rightArmRig.shoulder;
+  const leftElbow = leftArmRig.elbow;
+  const rightElbow = rightArmRig.elbow;
+  torsoGroup.add(leftArm, rightArm);
 
+  // Slim Weathered Back Battle Half-Cloak (tucked cleanly behind back so front V-taper armor stays crisp)
   const capePivot = new THREE.Group();
-  capePivot.position.set(0, 1.38, -0.16);
-  const capeGeo = new THREE.PlaneGeometry(0.32, 0.32, 4, 4);
+  capePivot.position.set(0, 0.50, -0.165);
+  const capeGeo = new THREE.PlaneGeometry(0.44, 1.04, 8, 10);
+  capeGeo.translate(0, -0.52, 0);
+  const cCapePos = capeGeo.attributes.position;
+  for (let i = 0; i < cCapePos.count; i++) {
+    const cx = cCapePos.getX(i);
+    const cy = cCapePos.getY(i);
+    const dropT = Math.min(1, Math.max(0, -cy / 1.04));
+    const widthScale = 0.68 + dropT * 0.45;
+    const shred = dropT > 0.78 ? -Math.abs(Math.sin(cx * 24.0)) * 0.06 * ((dropT - 0.78) / 0.22) : 0;
+    const drapeZ = -0.03 - Math.sin(dropT * Math.PI * 0.85) * 0.06 + Math.cos(cx * 11.0) * 0.018 * dropT;
+    cCapePos.setXYZ(i, cx * widthScale, cy + shred, drapeZ);
+  }
+  capeGeo.computeVertexNormals();
   const capeBasePositions = new Float32Array(capeGeo.attributes.position.array);
-  bodyGroup.add(capePivot);
+  const capeMesh = new THREE.Mesh(capeGeo, tatteredClothMat);
+  capeMesh.castShadow = true;
+  capePivot.add(capeMesh);
+  torsoGroup.add(capePivot);
 
-  // Two-Handed Greatsword
+  // Diagonal Back Greatsword Scabbard (pommel & hilt rise over character's right shoulder; blade sheathed downward past left hip)
   const backSwordGroup = new THREE.Group();
-  backSwordGroup.position.set(0.02, 1.05, -0.19);
-  backSwordGroup.rotation.z = -0.48;
-  backSwordGroup.rotation.x = 0.08;
+  backSwordGroup.position.set(0.01, 0.22, -0.20);
+  backSwordGroup.rotation.z = 0.50;
+  backSwordGroup.rotation.x = 0.06;
 
   const backScabbard = new THREE.Mesh(
-    new THREE.BoxGeometry(0.072, 1.06, 0.032),
+    new THREE.BoxGeometry(0.064, 1.14, 0.030),
     darkLeatherMat,
   );
-  backScabbard.position.y = -0.16;
+  backScabbard.position.y = -0.17;
   const backChape = new THREE.Mesh(
-    new THREE.ConeGeometry(0.036, 0.12, 4),
-    silverTrimMat,
+    new THREE.ConeGeometry(0.032, 0.14, 4),
+    armorTrimMat,
   );
   backChape.rotation.x = Math.PI;
-  backChape.position.y = -0.75;
-  const backSwordVisual = buildGreatswordMesh(mats, darkLeatherMat, 1.04);
-  backSwordVisual.position.y = 0.22;
-  backSwordGroup.add(backScabbard, backChape, backSwordVisual);
-  bodyGroup.add(backSwordGroup);
+  backChape.position.y = -0.78;
 
-  const handSwordGroup = buildGreatswordMesh(mats, darkLeatherMat, 1.06);
-  handSwordGroup.position.set(0.0, -0.55, 0.04);
-  handSwordGroup.rotation.x = Math.PI * 0.42;
+  // Flip greatsword upside down inside scabbard so grip+pommel protrude cleanly over shoulder (-X when z=0.50) and blade rests downward inside sheath
+  const backSwordVisual = buildGreatswordMesh(mats, beltLeatherMat, 1.00);
+  backSwordVisual.rotation.z = Math.PI;
+  backSwordVisual.position.y = 0.60;
+  backSwordGroup.add(backScabbard, backChape, backSwordVisual);
+  torsoGroup.add(backSwordGroup);
+
+  // Held Right-Hand Gothic Greatsword
+  const handSwordGroup = buildGreatswordMesh(mats, beltLeatherMat, 1.16);
+  handSwordGroup.position.set(0.0, -0.29, 0.034);
+  handSwordGroup.rotation.x = Math.PI * 0.44;
   handSwordGroup.visible = false;
-  rightArm.add(handSwordGroup);
+  rightElbow.add(handSwordGroup);
 
   // Steel Slash Trail
   const slashCanvas = document.createElement('canvas');
@@ -752,7 +1070,7 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   const radGrad = sctx.createRadialGradient(64, 64, 28, 64, 64, 62);
   radGrad.addColorStop(0.0, 'rgba(255,255,255,0)');
   radGrad.addColorStop(0.58, 'rgba(210,232,255,0.18)');
-  radGrad.addColorStop(0.85, 'rgba(235,245,255,0.92)');
+  radGrad.addColorStop(0.85, 'rgba(235,245,255,0.88)');
   radGrad.addColorStop(1.0, 'rgba(255,255,255,0)');
   sctx.fillStyle = radGrad;
   sctx.beginPath();
@@ -775,66 +1093,113 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
     blending: THREE.AdditiveBlending,
   });
   const slashArcMesh = new THREE.Mesh(slashArcGeo, slashArcMat);
-  slashArcMesh.position.set(0, 1.12, 0.30);
+  slashArcMesh.position.set(0, 0.24, 0.30);
   slashArcMesh.visible = false;
-  bodyGroup.add(slashArcMesh);
+  torsoGroup.add(slashArcMesh);
 
-  // High-Detail Sculpted Male Hero Head (no cone nose or Lego ball jaw!)
+  // Rugged Warrior Head + Parted Shoulder-Length Silver-Grey Hair (y = 0.75 above torso = ~1.84m total height)
   const headGroup = new THREE.Group();
-  headGroup.position.set(0, 1.66, 0.01);
-  bodyGroup.add(headGroup);
+  headGroup.position.set(0, 0.75, 0.01);
+  torsoGroup.add(headGroup);
 
   const neck = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.056, 0.068, 0.15, 20),
+    new THREE.CylinderGeometry(0.054, 0.066, 0.14, 18),
     skinMat,
   );
-  neck.position.y = -0.14;
+  neck.position.y = -0.125;
   headGroup.add(neck);
 
-  const heroCranium = new THREE.Mesh(createSculptedHeadGeo(0.130, 0.90), skinMat);
+  const heroCranium = new THREE.Mesh(createSculptedHeadGeo(0.118, 0.87), skinMat);
   heroCranium.castShadow = true;
   headGroup.add(heroCranium);
 
-  addSculptedBeard(headGroup, hairMat, 'stubble', 1.0);
+  addSculptedBeard(headGroup, stubbleMat, 'stubble', 0.91);
 
   for (const s of [-1, 1]) {
-    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.024, 12, 10), skinMat);
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), skinMat);
     ear.scale.set(0.38, 1.15, 0.68);
-    ear.position.set(s * 0.114, -0.008, -0.006);
+    ear.position.set(s * 0.104, -0.008, -0.006);
     headGroup.add(ear);
   }
 
-  addRealisticEyesAndBrows(headGroup, 0x3a4a5e, 0x1d140f, 1.0);
+  addRealisticEyesAndBrows(headGroup, 0x4b5c6e, 0x4e4a47, 0.80);
 
-  const hairTop = new THREE.Mesh(
-    new THREE.SphereGeometry(0.136, 26, 18, 0, Math.PI * 2, 0, Math.PI * 0.64),
-    hairMat,
+  // Subtle heavy brow shadow ridge for fierce dark-fantasy expression
+  const browShadow = new THREE.Mesh(
+    new THREE.BoxGeometry(0.112, 0.012, 0.024),
+    skinMat,
   );
-  hairTop.scale.set(0.92, 1.08, 1.0);
-  hairTop.rotation.x = -0.20;
-  hairTop.castShadow = true;
-  headGroup.add(hairTop);
+  browShadow.position.set(0, 0.028, 0.106);
+  headGroup.add(browShadow);
 
-  const waveLocks: [number, number, number, number][] = [
-    [-0.075, 0.085, 0.095, -0.25],
-    [-0.015, 0.105, 0.105, 0.12],
-    [0.065, 0.09, 0.098, 0.35],
-    [-0.112, 0.045, 0.03, -0.55],
-    [0.112, 0.045, 0.03, 0.55],
-    [-0.07, 0.04, -0.095, -0.2],
-    [0.07, 0.04, -0.095, 0.2],
+  // Layered Tapered Silver-Grey Parted Hair (natural ribbon strands framing forehead & jaw)
+  const crownCapGeo = new THREE.SphereGeometry(0.122, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.54);
+  const capPos = crownCapGeo.attributes.position;
+  const capCol = new Float32Array(capPos.count * 3);
+  const cTop = new THREE.Color(0xb8bec8);
+  const cSide = new THREE.Color(0x8a919d);
+  const cMix = new THREE.Color();
+  for (let i = 0; i < capPos.count; i++) {
+    const cx = capPos.getX(i);
+    const cy = capPos.getY(i);
+    const cz = capPos.getZ(i);
+    const f = Math.max(0, Math.min(1, cy / 0.122));
+    cMix.lerpColors(cSide, cTop, f);
+    capCol[i * 3] = cMix.r;
+    capCol[i * 3 + 1] = cMix.g;
+    capCol[i * 3 + 2] = cMix.b;
+    // Slight central part dip at front hairline while keeping forehead covered
+    if (cz > 0.03 && Math.abs(cx) < 0.028) {
+      capPos.setY(i, cy - 0.008);
+    }
+  }
+  crownCapGeo.setAttribute('color', new THREE.BufferAttribute(capCol, 3));
+  crownCapGeo.computeVertexNormals();
+  const hairCrown = new THREE.Mesh(crownCapGeo, silverHairMat);
+  hairCrown.scale.set(0.94, 0.98, 1.03);
+  hairCrown.rotation.x = 0.06; // Tilted slightly forward to cover upper forehead naturally
+  hairCrown.position.set(0, 0.018, 0.004);
+  hairCrown.castShadow = true;
+  headGroup.add(hairCrown);
+
+  // Tapered center-parted front curtains + layered cheek/neck/nape locks
+  const hairLockSpecs: {
+    pos: [number, number, number];
+    rot: [number, number, number];
+    len: number;
+    w: number;
+    t: number;
+    arch: number;
+    flare: number;
+    curl: number;
+  }[] = [
+    // Front center-parted locks sweeping forward & outward past temples (framing forehead cleanly above eyes)
+    { pos: [-0.020, 0.114, 0.088], rot: [0.22, -0.25, -0.26], len: 0.125, w: 0.056, t: 0.016, arch: 0.022, flare: -0.042, curl: 0.008 },
+    { pos: [0.020, 0.114, 0.088], rot: [0.22, 0.25, 0.26], len: 0.125, w: 0.056, t: 0.016, arch: 0.022, flare: 0.042, curl: 0.008 },
+    { pos: [-0.062, 0.096, 0.072], rot: [0.14, -0.68, -0.18], len: 0.175, w: 0.056, t: 0.017, arch: 0.022, flare: -0.028, curl: 0.014 },
+    { pos: [0.062, 0.096, 0.072], rot: [0.14, 0.68, 0.18], len: 0.175, w: 0.056, t: 0.017, arch: 0.022, flare: 0.028, curl: 0.014 },
+    // Jaw & ear-framing layered side locks
+    { pos: [-0.102, 0.062, 0.012], rot: [0.08, -1.42, -0.12], len: 0.210, w: 0.062, t: 0.018, arch: 0.018, flare: -0.012, curl: 0.010 },
+    { pos: [0.102, 0.062, 0.012], rot: [0.08, 1.42, 0.12], len: 0.210, w: 0.062, t: 0.018, arch: 0.018, flare: 0.012, curl: 0.010 },
+    // Rear shoulder-length layered silver locks draping seamlessly over collar/back
+    { pos: [-0.070, 0.054, -0.082], rot: [-0.18, -2.42, -0.08], len: 0.235, w: 0.074, t: 0.019, arch: 0.018, flare: -0.010, curl: -0.010 },
+    { pos: [0.070, 0.054, -0.082], rot: [-0.18, 2.42, 0.08], len: 0.235, w: 0.074, t: 0.019, arch: 0.018, flare: 0.010, curl: -0.010 },
+    { pos: [0.0, 0.060, -0.108], rot: [-0.22, Math.PI, 0], len: 0.245, w: 0.092, t: 0.020, arch: 0.018, flare: 0, curl: -0.015 },
+    { pos: [-0.036, 0.074, -0.102], rot: [-0.20, -2.85, -0.04], len: 0.215, w: 0.064, t: 0.017, arch: 0.014, flare: -0.006, curl: -0.008 },
+    { pos: [0.036, 0.074, -0.102], rot: [-0.20, 2.85, 0.04], len: 0.215, w: 0.064, t: 0.017, arch: 0.014, flare: 0.006, curl: -0.008 },
   ];
-  for (const [lx, ly, lz, tilt] of waveLocks) {
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(lx * 0.65, ly + 0.04, lz * 0.65),
-      new THREE.Vector3(lx, ly, lz + 0.012),
-      new THREE.Vector3(lx * 1.08, ly - 0.085, lz - 0.005),
-    ]);
-    const lock = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, 10, 0.023, 8, false),
-      hairMat,
+  for (const spec of hairLockSpecs) {
+    const lockGeo = createTaperedHairLockGeo(
+      spec.len,
+      spec.w,
+      spec.t,
+      spec.arch,
+      spec.flare,
+      spec.curl,
     );
-    lock.rotation.z = tilt * 0.12;
+    const lock = new THREE.Mesh(lockGeo, silverHairMat);
+    lock.position.set(...spec.pos);
+    lock.rotation.set(...spec.rot);
     lock.castShadow = true;
     headGroup.add(lock);
   }
@@ -842,10 +1207,19 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   return {
     root,
     bodyGroup,
+    pelvisGroup,
+    torsoGroup,
     leftLeg,
     rightLeg,
+    leftKnee,
+    rightKnee,
+    leftAnkle,
+    rightAnkle,
     leftArm,
     rightArm,
+    leftElbow,
+    rightElbow,
+    coatSkirt,
     capePivot,
     capeGeo,
     capeBasePositions,
@@ -867,7 +1241,8 @@ export function animateHeroGait(
   attackState?: HeroAttackAnimState,
 ): void {
   const isMoving = speed > 0.25;
-  const k = 1 - Math.exp(-14 * dt);
+  const k = 1 - Math.exp(-15 * dt);
+  const normSpd = Math.min(1.0, speed / 7.8);
 
   const swordInHand =
     Boolean(attackState && attackState.timer > 0) ||
@@ -876,30 +1251,97 @@ export function animateHeroGait(
   rig.backSwordGroup.visible = !swordInHand;
 
   if (isMoving) {
-    const swing = Math.sin(walkPhase) * 0.62;
-    const bounce = Math.abs(Math.sin(walkPhase)) * 0.055;
-    rig.leftLeg.rotation.x = swing;
-    rig.rightLeg.rotation.x = -swing;
-    rig.leftArm.rotation.x = -swing * 0.52;
-    rig.rightArm.rotation.x = swordInHand ? -0.35 + swing * 0.22 : swing * 0.52;
-    rig.rightArm.rotation.z = 0;
-    rig.rightArm.rotation.y = 0;
-    rig.bodyGroup.position.y = bounce;
-    rig.bodyGroup.rotation.y += (0 - rig.bodyGroup.rotation.y) * k;
-    rig.bodyGroup.rotation.z = Math.cos(walkPhase) * 0.02;
-    rig.headGroup.rotation.y = Math.sin(walkPhase * 0.5) * 0.035;
+    // Athletic weighted swordsman gait: hip/shoulder counter-twist, deep knee swing flexion, ankle push-off
+    const sinP = Math.sin(walkPhase);
+    const cosP = Math.cos(walkPhase);
+
+    const targetHipL = -sinP * 0.56 * normSpd;
+    const targetHipR = sinP * 0.56 * normSpd;
+    const targetKneeL = Math.max(0.08, (sinP > 0 ? sinP * 0.72 : -sinP * 0.26) * normSpd + 0.12);
+    const targetKneeR = Math.max(0.08, (sinP < 0 ? -sinP * 0.72 : sinP * 0.26) * normSpd + 0.12);
+    const targetAnkleL = cosP * 0.24 * normSpd;
+    const targetAnkleR = -cosP * 0.24 * normSpd;
+
+    rig.leftLeg.rotation.x += (targetHipL - rig.leftLeg.rotation.x) * k;
+    rig.rightLeg.rotation.x += (targetHipR - rig.rightLeg.rotation.x) * k;
+    rig.leftKnee.rotation.x += (targetKneeL - rig.leftKnee.rotation.x) * k;
+    rig.rightKnee.rotation.x += (targetKneeR - rig.rightKnee.rotation.x) * k;
+    rig.leftAnkle.rotation.x += (targetAnkleL - rig.leftAnkle.rotation.x) * k;
+    rig.rightAnkle.rotation.x += (targetAnkleR - rig.rightAnkle.rotation.x) * k;
+
+    const comBob = (1.0 - Math.abs(cosP)) * 0.038 - Math.abs(sinP) * 0.022;
+    rig.pelvisGroup.position.y += (0.94 + comBob * normSpd - rig.pelvisGroup.position.y) * k;
+    rig.pelvisGroup.rotation.y += (sinP * 0.10 * normSpd - rig.pelvisGroup.rotation.y) * k;
+    rig.pelvisGroup.rotation.z += (cosP * 0.030 * normSpd - rig.pelvisGroup.rotation.z) * k;
+
+    rig.torsoGroup.rotation.y += (-sinP * 0.13 * normSpd - rig.torsoGroup.rotation.y) * k;
+    rig.torsoGroup.rotation.x += (0.12 * normSpd - rig.torsoGroup.rotation.x) * k;
+    rig.headGroup.rotation.y += (sinP * 0.04 * normSpd - rig.headGroup.rotation.y) * k;
+    rig.headGroup.rotation.x += (-0.06 * normSpd - rig.headGroup.rotation.x) * k;
+
+    rig.coatSkirt.rotation.x += ((0.06 + Math.abs(sinP) * 0.12 * normSpd) - rig.coatSkirt.rotation.x) * k;
+
+    rig.leftArm.rotation.x += (sinP * 0.44 * normSpd - rig.leftArm.rotation.x) * k;
+    rig.leftArm.rotation.z += (-0.16 - rig.leftArm.rotation.z) * k;
+    rig.leftElbow.rotation.x += ((-0.32 - Math.max(0, -sinP) * 0.24) - rig.leftElbow.rotation.x) * k;
+
+    if (swordInHand) {
+      // Lowered relaxed diagonal sword carry (zero sun reflection glare, clears tassets)
+      rig.rightArm.rotation.x += ((0.18 - sinP * 0.18) - rig.rightArm.rotation.x) * k;
+      rig.rightArm.rotation.z += (0.28 - rig.rightArm.rotation.z) * k;
+      rig.rightArm.rotation.y += (-0.10 - rig.rightArm.rotation.y) * k;
+      rig.rightElbow.rotation.x += (-0.36 - rig.rightElbow.rotation.x) * k;
+    } else {
+      rig.rightArm.rotation.x += (-sinP * 0.44 * normSpd - rig.rightArm.rotation.x) * k;
+      rig.rightArm.rotation.z += (0.16 - rig.rightArm.rotation.z) * k;
+      rig.rightArm.rotation.y += (0 - rig.rightArm.rotation.y) * k;
+      rig.rightElbow.rotation.x += ((-0.32 - Math.max(0, sinP) * 0.24) - rig.rightElbow.rotation.x) * k;
+    }
+
+    rig.capePivot.rotation.x += ((0.18 + normSpd * 0.16) - rig.capePivot.rotation.x) * k;
   } else {
-    rig.leftLeg.rotation.x += (0 - rig.leftLeg.rotation.x) * k;
-    rig.rightLeg.rotation.x += (0 - rig.rightLeg.rotation.x) * k;
-    rig.leftArm.rotation.x += ((swordInHand ? -0.22 : 0.04) - rig.leftArm.rotation.x) * k;
-    rig.rightArm.rotation.x += ((swordInHand ? -0.34 : 0.04) - rig.rightArm.rotation.x) * k;
-    rig.rightArm.rotation.z += ((swordInHand ? -0.14 : -0.06) - rig.rightArm.rotation.z) * k;
-    rig.rightArm.rotation.y += (0 - rig.rightArm.rotation.y) * k;
-    const breathe = Math.sin(elapsed * 2.0) * 0.012;
-    rig.bodyGroup.position.y += (breathe - rig.bodyGroup.position.y) * k;
-    rig.bodyGroup.rotation.y += (0 - rig.bodyGroup.rotation.y) * k;
-    rig.bodyGroup.rotation.z += (0 - rig.bodyGroup.rotation.z) * k;
+    // Grounded heroic combat-ready A-stance matching reference pose (arms flared clear of tassets)
+    const breathe = Math.sin(elapsed * 2.1);
+    rig.leftLeg.rotation.x += (0.04 - rig.leftLeg.rotation.x) * k;
+    rig.rightLeg.rotation.x += (-0.04 - rig.rightLeg.rotation.x) * k;
+    rig.leftKnee.rotation.x += (0.05 - rig.leftKnee.rotation.x) * k;
+    rig.rightKnee.rotation.x += (0.05 - rig.rightKnee.rotation.x) * k;
+    rig.leftAnkle.rotation.x += (0 - rig.leftAnkle.rotation.x) * k;
+    rig.rightAnkle.rotation.x += (0 - rig.rightAnkle.rotation.x) * k;
+
+    rig.pelvisGroup.position.y += (0.935 + breathe * 0.008 - rig.pelvisGroup.position.y) * k;
+    rig.pelvisGroup.rotation.y += (0 - rig.pelvisGroup.rotation.y) * k;
+    rig.pelvisGroup.rotation.z += (0 - rig.pelvisGroup.rotation.z) * k;
+    rig.torsoGroup.rotation.y += (0 - rig.torsoGroup.rotation.y) * k;
+    rig.torsoGroup.rotation.x += ((0.02 + breathe * 0.015) - rig.torsoGroup.rotation.x) * k;
+    rig.headGroup.rotation.y += (Math.sin(elapsed * 0.7) * 0.04 - rig.headGroup.rotation.y) * k;
+    rig.headGroup.rotation.x += (0 - rig.headGroup.rotation.x) * k;
+    rig.coatSkirt.rotation.x += (0.04 - rig.coatSkirt.rotation.x) * k;
+
+    rig.leftArm.rotation.x += ((swordInHand ? -0.06 : 0.03) - rig.leftArm.rotation.x) * k;
+    rig.leftArm.rotation.z += (-0.21 - rig.leftArm.rotation.z) * k;
+    rig.leftElbow.rotation.x += ((swordInHand ? -0.26 : -0.18) - rig.leftElbow.rotation.x) * k;
+
+    rig.rightArm.rotation.x += ((swordInHand ? 0.08 : 0.03) - rig.rightArm.rotation.x) * k;
+    rig.rightArm.rotation.z += ((swordInHand ? 0.28 : 0.21) - rig.rightArm.rotation.z) * k;
+    rig.rightArm.rotation.y += ((swordInHand ? -0.10 : 0) - rig.rightArm.rotation.y) * k;
+    rig.rightElbow.rotation.x += ((swordInHand ? -0.34 : -0.18) - rig.rightElbow.rotation.x) * k;
+    rig.capePivot.rotation.x += (0.06 - rig.capePivot.rotation.x) * k;
   }
+
+  // Real-time cloth ripple on cape vertices
+  const cPos = rig.capeGeo.attributes.position;
+  const base = rig.capeBasePositions;
+  const flutterAmp = 0.016 + normSpd * 0.040;
+  for (let i = 0; i < cPos.count; i++) {
+    const bx = base[i * 3];
+    const by = base[i * 3 + 1];
+    const bz = base[i * 3 + 2];
+    const drop = Math.min(1, Math.max(0, -by / 1.04));
+    const wave = Math.sin(elapsed * (3.2 + normSpd * 5.0) - drop * 4.5 + bx * 4.0) * flutterAmp * drop;
+    cPos.setXYZ(i, bx, by, bz + wave);
+  }
+  cPos.needsUpdate = true;
 
   if (attackState && attackState.timer > 0) {
     const p = 1 - Math.max(0, Math.min(1, attackState.timer / attackState.duration));
@@ -907,40 +1349,43 @@ export function animateHeroGait(
 
     if (combo === 0) {
       const sweep = Math.sin(p * Math.PI);
-      rig.rightArm.rotation.x = -1.7 + p * 2.45;
+      rig.rightArm.rotation.x = -1.35 + p * 2.15;
       rig.rightArm.rotation.z = -0.82 + p * 1.45;
       rig.rightArm.rotation.y = 0.85 - p * 1.95;
-      rig.bodyGroup.rotation.y = 0.52 - p * 1.1;
+      rig.rightElbow.rotation.x = -0.45 + p * 0.25;
+      rig.torsoGroup.rotation.y = 0.48 - p * 1.05;
       rig.leftArm.rotation.x = -0.45;
       rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
       rig.slashArcMesh.rotation.set(0.18, p * 2.3 - 1.15, -0.20);
       rig.slashArcMesh.scale.setScalar(1.0);
       rig.slashArcMat.color.setHex(0xd8ecff);
-      rig.slashArcMat.opacity = sweep * 0.78;
+      rig.slashArcMat.opacity = sweep * 0.52;
     } else if (combo === 1) {
       const sweep = Math.sin(p * Math.PI);
-      rig.rightArm.rotation.x = -1.35 + Math.sin(p * Math.PI) * 0.55;
+      rig.rightArm.rotation.x = -1.15 + Math.sin(p * Math.PI) * 0.45;
       rig.rightArm.rotation.z = 0.85 - p * 1.75;
       rig.rightArm.rotation.y = -1.05 + p * 2.1;
-      rig.bodyGroup.rotation.y = -0.52 + p * 1.1;
+      rig.rightElbow.rotation.x = -0.35;
+      rig.torsoGroup.rotation.y = -0.48 + p * 1.05;
       rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
       rig.slashArcMesh.rotation.set(-0.18, -p * 2.3 + 1.15, 0.24);
       rig.slashArcMesh.scale.setScalar(1.05);
       rig.slashArcMat.color.setHex(0xbde2ff);
-      rig.slashArcMat.opacity = sweep * 0.78;
+      rig.slashArcMat.opacity = sweep * 0.52;
     } else {
-      const hop = Math.sin(p * Math.PI) * 0.24;
+      const hop = Math.sin(p * Math.PI) * 0.18;
       const sweep = Math.sin(p * Math.PI);
-      rig.bodyGroup.position.y += hop;
-      rig.rightArm.rotation.x = -2.35 + p * 3.05;
+      rig.pelvisGroup.position.y += hop;
+      rig.rightArm.rotation.x = -1.95 + p * 2.65;
       rig.rightArm.rotation.z = -0.15;
       rig.rightArm.rotation.y = 0;
-      rig.bodyGroup.rotation.x = -0.12 + p * 0.26;
+      rig.rightElbow.rotation.x = -0.32;
+      rig.torsoGroup.rotation.x = -0.10 + p * 0.28;
       rig.slashArcMesh.visible = p > 0.18 && p < 0.88;
       rig.slashArcMesh.rotation.set(p * 1.7 - 0.55, 0, Math.PI * 0.5);
       rig.slashArcMesh.scale.setScalar(1.22);
       rig.slashArcMat.color.setHex(0xffdfa6);
-      rig.slashArcMat.opacity = sweep * 0.86;
+      rig.slashArcMat.opacity = sweep * 0.58;
     }
   } else {
     rig.bodyGroup.rotation.x += (0 - rig.bodyGroup.rotation.x) * k;

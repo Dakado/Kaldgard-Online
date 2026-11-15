@@ -35,6 +35,9 @@ export interface PronteraMaterials {
   wroughtIron: THREE.MeshStandardMaterial;
   steelArmor: THREE.MeshPhysicalMaterial;
   darkSteel: THREE.MeshPhysicalMaterial;
+  gunmetalArmor: THREE.MeshPhysicalMaterial;
+  forgedBlade: THREE.MeshPhysicalMaterial;
+  chainmail: THREE.MeshStandardMaterial;
   quiltedLeather: THREE.MeshPhysicalMaterial;
   darkCoat: THREE.MeshPhysicalMaterial;
   windowGlow: THREE.MeshStandardMaterial;
@@ -770,8 +773,36 @@ function createDirtTexture(size = 512): THREE.CanvasTexture {
 }
 
 /**
- * Rebuilt from scratch: High-definition stony/cobbled medieval country road texture
- * with embedded flagstones, compacted gravel, and deep mortar/soil crevices.
+ * Seamless 2D periodic value noise for organic procedural textures (zero stripe artifacts).
+ */
+function createPeriodicNoiseGrid(gridSize: number, seed: number): Float32Array {
+  const rand = seededRand(seed);
+  const grid = new Float32Array(gridSize * gridSize);
+  for (let i = 0; i < grid.length; i++) grid[i] = rand();
+  return grid;
+}
+
+function samplePeriodicNoise(grid: Float32Array, gridSize: number, u: number, v: number): number {
+  const gx = ((u * gridSize) % gridSize + gridSize) % gridSize;
+  const gy = ((v * gridSize) % gridSize + gridSize) % gridSize;
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const x1 = (x0 + 1) % gridSize;
+  const y1 = (y0 + 1) % gridSize;
+  const fx = gx - x0;
+  const fy = gy - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const v00 = grid[y0 * gridSize + x0];
+  const v10 = grid[y0 * gridSize + x1];
+  const v01 = grid[y1 * gridSize + x0];
+  const v11 = grid[y1 * gridSize + x1];
+  return (v00 * (1 - sx) + v10 * sx) * (1 - sy) + (v01 * (1 - sx) + v11 * sx) * sy;
+}
+
+/**
+ * Rebuilt from scratch: Sandy compacted forest footpath (písčitá lesní pěšina)
+ * with warm quartz sand grain, soft earth/humus mottling, and only occasional scattered fieldstones.
  */
 function createFieldTrailPbr(size = 1024): {
   map: THREE.CanvasTexture;
@@ -779,108 +810,129 @@ function createFieldTrailPbr(size = 1024): {
 } {
   const [canvas, ctx] = makeCanvas(size);
   const [hCanvas, hCtx] = makeCanvas(size);
-  const rand = seededRand(4021);
+  const rand = seededRand(4099);
 
-  // Compacted earth & crushed limestone roadbed base
-  ctx.fillStyle = '#7d6c55';
-  ctx.fillRect(0, 0, size, size);
-  hCtx.fillStyle = '#484848';
-  hCtx.fillRect(0, 0, size, size);
+  // Per-pixel multi-octave periodic sandy loam base
+  const nCoarse = createPeriodicNoiseGrid(12, 4101);
+  const nMid = createPeriodicNoiseGrid(28, 4102);
+  const nFine = createPeriodicNoiseGrid(72, 4103);
 
-  const drawWrappedEllipse = (
+  const img = ctx.createImageData(size, size);
+  const hImg = hCtx.createImageData(size, size);
+  const d = img.data;
+  const hd = hImg.data;
+
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const f1 = samplePeriodicNoise(nCoarse, 12, u, v);
+      const f2 = samplePeriodicNoise(nMid, 28, u, v);
+      const f3 = samplePeriodicNoise(nFine, 72, u, v);
+      const grain = (rand() - 0.5) * 0.14;
+      const blend = Math.max(0, Math.min(1, f1 * 0.45 + f2 * 0.34 + f3 * 0.21 + grain));
+
+      // Warm golden-ochre forest sand & dry packed soil palette
+      const r = Math.round(134 + blend * 46);
+      const g = Math.round(111 + blend * 40);
+      const b = Math.round(76 + blend * 30);
+      const idx = (y * size + x) * 4;
+      d[idx] = r;
+      d[idx + 1] = g;
+      d[idx + 2] = b;
+      d[idx + 3] = 255;
+
+      const hv = Math.round(98 + blend * 66);
+      hd[idx] = hv;
+      hd[idx + 1] = hv;
+      hd[idx + 2] = hv;
+      hd[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  hCtx.putImageData(hImg, 0, 0);
+
+  const drawWrappedPoly = (
     c: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    rx: number,
-    ry: number,
-    rot: number,
+    pts: [number, number][],
     fill: string,
     stroke?: string,
+    lineW = 2,
   ) => {
     c.fillStyle = fill;
     if (stroke) {
       c.strokeStyle = stroke;
-      c.lineWidth = 2.0;
+      c.lineWidth = lineW;
     }
     for (const ox of [-size, 0, size]) {
       for (const oy of [-size, 0, size]) {
-        const px = x + ox;
-        const py = y + oy;
-        if (px < -rx * 2 || px > size + rx * 2 || py < -ry * 2 || py > size + ry * 2) continue;
         c.beginPath();
-        c.ellipse(px, py, rx, ry, rot, 0, Math.PI * 2);
+        c.moveTo(pts[0][0] + ox, pts[0][1] + oy);
+        for (let k = 1; k < pts.length; k++) c.lineTo(pts[k][0] + ox, pts[k][1] + oy);
+        c.closePath();
         c.fill();
         if (stroke) c.stroke();
       }
     }
   };
 
-  // Coarse compacted soil & gravel patches
-  for (let i = 0; i < 4200; i++) {
-    const x = rand() * size;
-    const y = rand() * size;
-    const r = 2.5 + rand() * 8.5;
-    const rot = rand() * Math.PI;
-    const dark = rand() > 0.48;
-    const col = dark ? 'rgba(92, 78, 58, 0.26)' : 'rgba(154, 138, 110, 0.24)';
-    drawWrappedEllipse(ctx, x, y, r * 1.3, r * 0.9, rot, col);
-    const hv = dark ? 64 : 112;
-    drawWrappedEllipse(hCtx, x, y, r * 1.3, r * 0.9, rot, `rgba(${hv},${hv},${hv},0.25)`);
-  }
-
-  // Embedded weathered cobblestones & country flagstones (stony Kaldgard road feel)
-  const cells = 14;
-  const step = size / cells;
-  for (let gy = 0; gy < cells; gy++) {
-    for (let gx = 0; gx < cells; gx++) {
-      if (rand() < 0.14) continue; // Occasional worn earth gap between stones
-      const shift = (gy % 2) * (step * 0.48);
-      const cx = (gx * step + shift + (rand() - 0.5) * step * 0.28 + size) % size;
-      const cy = (gy * step + (rand() - 0.5) * step * 0.28 + size) % size;
-      const rx = step * (0.30 + rand() * 0.14);
-      const ry = step * (0.25 + rand() * 0.13);
-      const rot = (rand() - 0.5) * 0.65;
-
-      const baseTone = 136 + Math.floor(rand() * 44);
-      const warm = Math.floor((rand() - 0.3) * 16);
-      const stoneCol = `rgb(${baseTone + warm}, ${baseTone + Math.floor(warm * 0.6)}, ${baseTone - 10})`;
-      drawWrappedEllipse(ctx, cx, cy, rx, ry, rot, stoneCol, 'rgba(48, 40, 30, 0.68)');
-
-      // Highlighted stone crown
-      const hiTone = Math.min(235, baseTone + 26);
-      drawWrappedEllipse(
-        ctx,
-        cx - rx * 0.14,
-        cy - ry * 0.14,
-        rx * 0.58,
-        ry * 0.54,
-        rot,
-        `rgba(${hiTone}, ${hiTone - 4}, ${hiTone - 14}, 0.45)`,
-      );
-
-      // Stone height relief for crisp normal map
-      const hVal = 178 + Math.floor(rand() * 56);
-      drawWrappedEllipse(hCtx, cx, cy, rx, ry, rot, `rgb(${hVal},${hVal},${hVal})`, '#262626');
+  // Sparse occasional scattered fieldstones (občas nějaký kámen — ~22 stones per tile, not a dense cobble grid)
+  for (let i = 0; i < 22; i++) {
+    const cx = rand() * size;
+    const cy = rand() * size;
+    const rad = 11 + rand() * 19;
+    const verts = 6 + Math.floor(rand() * 3);
+    const pts: [number, number][] = [];
+    const baseAng = rand() * Math.PI * 2;
+    for (let k = 0; k < verts; k++) {
+      const ang = baseAng + (k / verts) * Math.PI * 2 + (rand() - 0.5) * 0.25;
+      const r = rad * (0.72 + rand() * 0.42);
+      pts.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * (0.76 + rand() * 0.3)]);
     }
+
+    const baseTone = 128 + Math.floor(rand() * 44);
+    const warm = Math.floor((rand() - 0.4) * 18);
+    drawWrappedPoly(
+      ctx,
+      pts,
+      `rgb(${baseTone + warm}, ${baseTone + Math.floor(warm * 0.6)}, ${baseTone - 8})`,
+      'rgba(62, 50, 34, 0.55)',
+      2.2,
+    );
+    const hVal = 188 + Math.floor(rand() * 48);
+    drawWrappedPoly(hCtx, pts, `rgb(${hVal},${hVal},${hVal})`, '#4a4a4a', 2.4);
   }
 
-  // Fine angular crushed stone & pebbles scattered in joints
-  for (let i = 0; i < 3200; i++) {
+  // Scattered fine pebbles & quartz sand flecks
+  for (let i = 0; i < 1400; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = 1.1 + rand() * 3.2;
-    const tone = 112 + Math.floor(rand() * 88);
-    drawWrappedEllipse(ctx, x, y, r * 1.2, r * 0.85, rand() * Math.PI, `rgb(${tone},${tone - 5},${tone - 14})`);
-    const hv = 135 + Math.floor(rand() * 90);
-    drawWrappedEllipse(hCtx, x, y, r * 1.2, r * 0.85, 0, `rgb(${hv},${hv},${hv})`);
+    const r = 0.8 + rand() * 2.5;
+    const warm = rand() > 0.4;
+    ctx.fillStyle = warm
+      ? `rgba(${175 + Math.floor(rand() * 40)}, ${150 + Math.floor(rand() * 32)}, ${110 + Math.floor(rand() * 24)}, 0.65)`
+      : `rgba(88, 72, 52, 0.45)`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    const hv = warm ? 156 + Math.floor(rand() * 55) : 78;
+    hCtx.fillStyle = `rgb(${hv},${hv},${hv})`;
+    hCtx.beginPath();
+    hCtx.arc(x, y, r, 0, Math.PI * 2);
+    hCtx.fill();
   }
 
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
-  const { normal } = buildNormalAndRoughnessFromHeight(hCanvas, 2.9, 0.58, 0.95, true);
+  const { normal } = buildNormalAndRoughnessFromHeight(hCanvas, 2.3, 0.72, 0.96, true);
   return { map, normal };
 }
 
+/**
+ * Rebuilt from scratch: Photorealistic Diablo-grade multi-octave ridged granite cliff rock
+ * (natural craggy stone grain, fine mineral fissures, and organic lichen — zero geometric cells or stripes).
+ */
 function createCliffRockPbr(size = 1024): {
   map: THREE.CanvasTexture;
   normal: THREE.CanvasTexture;
@@ -889,52 +941,122 @@ function createCliffRockPbr(size = 1024): {
 } {
   const [canvas, ctx] = makeCanvas(size);
   const [hCanvas, hCtx] = makeCanvas(size);
-  const rand = seededRand(8841);
+  const rand = seededRand(8899);
 
-  ctx.fillStyle = '#5f635a';
+  // Seamless periodic multi-octave noise grids at 4 frequency scales
+  const g1 = createPeriodicNoiseGrid(10, 8911);
+  const g2 = createPeriodicNoiseGrid(22, 8912);
+  const g3 = createPeriodicNoiseGrid(44, 8913);
+  const g4 = createPeriodicNoiseGrid(88, 8914);
+  const gMoss = createPeriodicNoiseGrid(14, 8915);
+  const gMineral = createPeriodicNoiseGrid(32, 8916);
+
+  const img = ctx.createImageData(size, size);
+  const hImg = hCtx.createImageData(size, size);
+  const d = img.data;
+  const hd = hImg.data;
+
+  const ridge = (val: number) => 1.0 - Math.abs(val * 2.0 - 1.0);
+
+  for (let y = 0; y < size; y++) {
+    const v0 = y / size;
+    for (let x = 0; x < size; x++) {
+      const u0 = x / size;
+
+      // Subtle domain warp to eliminate any axial alignment
+      const wx = (samplePeriodicNoise(g1, 10, u0, v0) - 0.5) * 0.08 + (samplePeriodicNoise(g2, 22, u0, v0) - 0.5) * 0.03;
+      const wy = (samplePeriodicNoise(g2, 22, v0, u0) - 0.5) * 0.08 + (samplePeriodicNoise(g1, 10, v0, u0) - 0.5) * 0.03;
+      const uw = ((u0 + wx) % 1 + 1) % 1;
+      const vw = ((v0 + wy) % 1 + 1) % 1;
+
+      const n1 = samplePeriodicNoise(g1, 10, uw, vw);
+      const n2 = samplePeriodicNoise(g2, 22, uw, vw);
+      const n3 = samplePeriodicNoise(g3, 44, u0, v0);
+      const n4 = samplePeriodicNoise(g4, 88, u0, v0);
+
+      // Ridged multifractal rock relief (sharp angular ledges & micro stone plates)
+      const r1 = Math.pow(ridge(n1), 1.6);
+      const r2 = Math.pow(ridge(n2), 1.4);
+      const r3 = ridge(n3);
+
+      // Hairline fracture crevices where both coarse and mid ridge valleys pinch
+      const valley = Math.min(r1, r2 * 1.15);
+      const crevice = valley < 0.22 ? valley / 0.22 : 1.0;
+
+      const relief = r1 * 0.44 + r2 * 0.30 + r3 * 0.16 + n4 * 0.10;
+      const mineral = samplePeriodicNoise(gMineral, 32, u0, v0);
+      const speckle = (rand() - 0.5) * 0.075;
+
+      // Subtle dry highland moss/lichen in sheltered stone pockets
+      const mossRaw = samplePeriodicNoise(gMoss, 14, uw, vw);
+      const mossMask = Math.max(0, (mossRaw - 0.64) * 2.4) * (1.0 - r1 * 0.45);
+
+      // Warm-cool natural granite palette (feldspar beige-grey, slate shadow, quartz flecks)
+      const stoneLum = (0.34 + relief * 0.34) * (0.62 + 0.38 * crevice) * (0.86 + mineral * 0.24 + speckle);
+      const warmTint = (mineral - 0.5) * 0.14;
+      const rCol = Math.max(24, Math.min(205, Math.round(stoneLum * (206 + warmTint * 90) * (1 - mossMask * 0.35))));
+      const gCol = Math.max(26, Math.min(202, Math.round(stoneLum * (202 + warmTint * 45) * (1 - mossMask * 0.10) + mossMask * 24)));
+      const bCol = Math.max(24, Math.min(196, Math.round(stoneLum * (190 - warmTint * 60) * (1 - mossMask * 0.42))));
+
+      const idx = (y * size + x) * 4;
+      d[idx] = rCol;
+      d[idx + 1] = gCol;
+      d[idx + 2] = bCol;
+      d[idx + 3] = 255;
+
+      const hVal = Math.max(16, Math.min(248, Math.round((0.18 + relief * 0.72) * (0.52 + 0.48 * crevice) * 242)));
+      hd[idx] = hVal;
+      hd[idx + 1] = hVal;
+      hd[idx + 2] = hVal;
+      hd[idx + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  hCtx.putImageData(hImg, 0, 0);
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 2.8, 0.68, 0.96, true);
+  return { map, normal, roughness, ao };
+}
+
+function createChainmailTextures(size = 512): {
+  map: THREE.CanvasTexture;
+  normal: THREE.CanvasTexture;
+  roughness: THREE.CanvasTexture;
+} {
+  const [canvas, ctx] = makeCanvas(size);
+  const [hCanvas, hCtx] = makeCanvas(size);
+  ctx.fillStyle = '#181b22';
   ctx.fillRect(0, 0, size, size);
-  hCtx.fillStyle = '#888888';
+  hCtx.fillStyle = '#222222';
   hCtx.fillRect(0, 0, size, size);
 
-  // Stratified sedimentary granite bands + vertical fractures
-  for (let y = 0; y < size; y += 6) {
-    const band = Math.sin((y / size) * Math.PI * 16) * 14 + Math.cos((y / size) * Math.PI * 34) * 8;
-    const lum = Math.max(58, Math.min(148, Math.round(98 + band)));
-    ctx.fillStyle = `rgb(${lum - 2}, ${lum}, ${lum - 7})`;
-    ctx.fillRect(0, y, size, 7);
-    const hlum = Math.max(48, Math.min(210, Math.round(135 + band * 2.1)));
-    hCtx.fillStyle = `rgb(${hlum},${hlum},${hlum})`;
-    hCtx.fillRect(0, y, size, 7);
-  }
+  const step = 20;
+  for (let row = -1; row <= size / step + 1; row++) {
+    const shift = (row % 2) * (step * 0.5);
+    for (let col = -1; col <= size / step + 1; col++) {
+      const cx = col * step + shift;
+      const cy = row * (step * 0.72);
+      ctx.strokeStyle = (row + col) % 2 === 0 ? '#68717e' : '#4e5662';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, step * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
 
-  for (let i = 0; i < 4200; i++) {
-    const x = rand() * size;
-    const y = rand() * size;
-    const w = 6 + rand() * 34;
-    const h = 2 + rand() * 9;
-    const shade = rand() > 0.5 ? 'rgba(38, 42, 36, 0.25)' : 'rgba(155, 160, 144, 0.20)';
-    ctx.fillStyle = shade;
-    ctx.fillRect(x, y, w, h);
-
-    const hv = rand() > 0.5 ? 60 : 196;
-    hCtx.fillStyle = `rgba(${hv},${hv},${hv},0.22)`;
-    hCtx.fillRect(x, y, w, h);
-  }
-
-  // Subtle moss streaks in rock crevices
-  for (let i = 0; i < 450; i++) {
-    const x = rand() * size;
-    const y = rand() * size;
-    ctx.fillStyle = 'rgba(72, 98, 48, 0.22)';
-    ctx.beginPath();
-    ctx.ellipse(x, y, 5 + rand() * 14, 2 + rand() * 5, rand() * 0.4, 0, Math.PI * 2);
-    ctx.fill();
+      hCtx.strokeStyle = (row + col) % 2 === 0 ? '#dcdcdc' : '#b4b4b4';
+      hCtx.lineWidth = 3.5;
+      hCtx.beginPath();
+      hCtx.arc(cx, cy, step * 0.42, 0, Math.PI * 2);
+      hCtx.stroke();
+    }
   }
 
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
-  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 3.1, 0.56, 0.95, true);
-  return { map, normal, roughness, ao };
+  const { normal, roughness } = buildNormalAndRoughnessFromHeight(hCanvas, 2.2, 0.34, 0.68, true);
+  return { map, normal, roughness };
 }
 
 function createWatermelonTexture(size = 256): THREE.CanvasTexture {
@@ -1198,6 +1320,81 @@ function createQuiltedLeatherTextures(size = 512): {
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
   const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 2.4, 0.34, 0.72, true);
+  return { map, normal, roughness, ao };
+}
+
+/**
+ * Generates dark-forged gothic gunmetal plate textures (brushed slate-iron, subtle V-fluting,
+ * micro hammer marks & crevice grime) matching dark-fantasy knight plate armor.
+ */
+function createGothicArmorTextures(size = 512): {
+  map: THREE.CanvasTexture;
+  normal: THREE.CanvasTexture;
+  roughness: THREE.CanvasTexture;
+  ao: THREE.CanvasTexture;
+} {
+  const [canvas, ctx] = makeCanvas(size);
+  const [hCanvas, hCtx] = makeCanvas(size);
+  const rand = seededRand(4409);
+
+  // Deep weathered gunmetal iron base
+  ctx.fillStyle = '#484f5a';
+  ctx.fillRect(0, 0, size, size);
+  hCtx.fillStyle = '#929292';
+  hCtx.fillRect(0, 0, size, size);
+
+  // Subtle horizontal & vertical brushed steel micro-grain
+  for (let y = 0; y < size; y += 2) {
+    const v = Math.floor((rand() - 0.5) * 18);
+    ctx.fillStyle = v > 0 ? `rgba(210,220,235,${(v / 220).toFixed(3)})` : `rgba(12,15,20,${(-v / 170).toFixed(3)})`;
+    ctx.fillRect(0, y, size, 1);
+
+    const hv = 136 + v * 2;
+    hCtx.fillStyle = `rgb(${hv},${hv},${hv})`;
+    hCtx.fillRect(0, y, size, 1);
+  }
+
+  // Subtle hammered dimples & weathered patina
+  for (let i = 0; i < 360; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 4 + rand() * 14;
+    const dark = rand() > 0.45;
+    ctx.fillStyle = dark ? 'rgba(18, 22, 28, 0.14)' : 'rgba(170, 182, 198, 0.09)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    hCtx.fillStyle = dark ? 'rgba(92,92,92,0.18)' : 'rgba(168,168,168,0.14)';
+    hCtx.beginPath();
+    hCtx.arc(x, y, r, 0, Math.PI * 2);
+    hCtx.fill();
+  }
+
+  // Fine gothic bevel/flute grooves
+  const step = size / 4;
+  for (let k = 0; k < 4; k++) {
+    const gy = k * step;
+    const grad = ctx.createLinearGradient(0, gy, 0, gy + step);
+    grad.addColorStop(0.0, 'rgba(20, 23, 28, 0.35)');
+    grad.addColorStop(0.14, 'rgba(195, 206, 220, 0.14)');
+    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.92, 'rgba(18, 21, 26, 0.28)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, gy, size, step);
+
+    const hGrad = hCtx.createLinearGradient(0, gy, 0, gy + step);
+    hGrad.addColorStop(0.0, 'rgba(62, 62, 62, 0.55)');
+    hGrad.addColorStop(0.16, 'rgba(210, 210, 210, 0.35)');
+    hGrad.addColorStop(0.55, 'rgba(145, 145, 145, 0)');
+    hGrad.addColorStop(0.94, 'rgba(72, 72, 72, 0.50)');
+    hCtx.fillStyle = hGrad;
+    hCtx.fillRect(0, gy, size, step);
+  }
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const { normal, roughness, ao } = buildNormalAndRoughnessFromHeight(hCanvas, 2.2, 0.28, 0.62, true);
   return { map, normal, roughness, ao };
 }
 
@@ -1480,6 +1677,17 @@ export function createPronteraMaterials(
   trackTex(quiltedPbr.roughness, false, 2, 2);
   trackTex(quiltedPbr.ao, false, 2, 2);
 
+  const chainmailPbr = createChainmailTextures(512);
+  trackTex(chainmailPbr.map, true, 4, 4);
+  trackTex(chainmailPbr.normal, false, 4, 4);
+  trackTex(chainmailPbr.roughness, false, 4, 4);
+
+  const gothicArmorPbr = createGothicArmorTextures(512);
+  trackTex(gothicArmorPbr.map, true, 2, 2);
+  trackTex(gothicArmorPbr.normal, false, 2, 2);
+  trackTex(gothicArmorPbr.roughness, false, 2, 2);
+  trackTex(gothicArmorPbr.ao, false, 2, 2);
+
   const plazaAccentStone = trackMat(
     new THREE.MeshStandardMaterial({
       color: 0xbcb09b,
@@ -1735,18 +1943,71 @@ export function createPronteraMaterials(
 
   const darkSteel = trackMat(
     new THREE.MeshPhysicalMaterial({
-      color: 0x565e6b,
+      color: 0x454c57,
       normalMap: metalPbr.normal,
-      normalScale: new THREE.Vector2(0.65, 0.65),
+      normalScale: new THREE.Vector2(0.75, 0.75),
       roughnessMap: metalPbr.roughness,
-      roughness: 0.28,
-      metalness: 0.91,
-      anisotropy: 0.68,
-      clearcoat: 0.22,
-      envMapIntensity: 1.52,
+      roughness: 0.40,
+      metalness: 0.78,
+      anisotropy: 0.38,
+      clearcoat: 0.08,
+      envMapIntensity: 0.78,
     }),
   );
   darkSteel.userData.pbrKind = 'metal';
+  darkSteel.userData.lockEnvIntensity = true;
+
+  const gunmetalArmor = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      map: gothicArmorPbr.map,
+      normalMap: gothicArmorPbr.normal,
+      normalScale: new THREE.Vector2(1.15, 1.15),
+      roughnessMap: gothicArmorPbr.roughness,
+      aoMap: gothicArmorPbr.ao,
+      aoMapIntensity: 0.78,
+      roughness: 0.38,
+      metalness: 0.78,
+      anisotropy: 0.34,
+      clearcoat: 0.08,
+      clearcoatRoughness: 0.42,
+      envMapIntensity: 0.85,
+    }),
+  );
+  gunmetalArmor.userData.pbrKind = 'metal';
+  gunmetalArmor.userData.lockEnvIntensity = true;
+
+  // Calibrated forged dark carbon-steel blade (zero GPU bloom glare under all light angles)
+  const forgedBlade = trackMat(
+    new THREE.MeshPhysicalMaterial({
+      color: 0x5c6470,
+      normalMap: metalPbr.normal,
+      normalScale: new THREE.Vector2(0.75, 0.75),
+      roughnessMap: metalPbr.roughness,
+      roughness: 0.50,
+      metalness: 0.58,
+      anisotropy: 0.32,
+      clearcoat: 0.0,
+      envMapIntensity: 0.36,
+    }),
+  );
+  forgedBlade.userData.pbrSkip = true;
+  forgedBlade.userData.lockEnvIntensity = true;
+
+  const chainmail = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0x8b94a1,
+      map: chainmailPbr.map,
+      normalMap: chainmailPbr.normal,
+      normalScale: new THREE.Vector2(1.25, 1.25),
+      roughnessMap: chainmailPbr.roughness,
+      roughness: 0.58,
+      metalness: 0.68,
+      envMapIntensity: 0.72,
+    }),
+  );
+  chainmail.userData.pbrKind = 'metal';
+  chainmail.userData.lockEnvIntensity = true;
 
   const quiltedLeather = trackMat(
     new THREE.MeshPhysicalMaterial({
@@ -1988,29 +2249,48 @@ export function createPronteraMaterials(
   });
 
   const createAwningMaterial = (canopyColor: number, accentColor: number) => {
-    const [canvas, ctx] = makeCanvas(512);
+    const texSize = 1024;
+    const [canvas, ctx] = makeCanvas(texSize);
+    const [hCanvas, hCtx] = makeCanvas(texSize);
     const c1 = new THREE.Color(canopyColor).getStyle();
     const c2 = new THREE.Color(accentColor).getStyle();
     const stripes = 8;
-    const sw = 512 / stripes;
+    const sw = texSize / stripes;
     for (let i = 0; i < stripes; i++) {
       ctx.fillStyle = i % 2 === 0 ? c1 : c2;
-      ctx.fillRect(i * sw, 0, sw, 512);
+      ctx.fillRect(i * sw, 0, Math.ceil(sw), texSize);
+      // Subtle stitched seam shadow between fabric panels
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.14)';
+      ctx.fillRect(i * sw, 0, 4, texSize);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.fillRect(i * sw + 4, 0, 2, texSize);
     }
-    // Subtle woven canvas cross-stitch shading
-    for (let y = 0; y < 512; y += 6) {
-      ctx.fillStyle = y % 12 === 0 ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
-      ctx.fillRect(0, y, 512, 3);
+    // Fine woven canvas thread relief
+    hCtx.fillStyle = '#888888';
+    hCtx.fillRect(0, 0, texSize, texSize);
+    for (let y = 0; y < texSize; y += 6) {
+      ctx.fillStyle = y % 12 === 0 ? 'rgba(0,0,0,0.045)' : 'rgba(255,255,255,0.035)';
+      ctx.fillRect(0, y, texSize, 3);
+      hCtx.fillStyle = y % 12 === 0 ? '#747474' : '#9c9c9c';
+      hCtx.fillRect(0, y, texSize, 3);
     }
     const tex = trackTex(new THREE.CanvasTexture(canvas), true);
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    const clothPbr = buildNormalAndRoughnessFromHeight(hCanvas, 1.3, 0.72, 0.94, true);
+    trackTex(clothPbr.normal, false);
     const m = trackMat(
       new THREE.MeshPhysicalMaterial({
         color: 0xffffff,
         map: tex,
-        roughness: 0.82,
-        sheen: 0.48,
-        sheenRoughness: 0.55,
-        side: THREE.DoubleSide,
+        normalMap: clothPbr.normal,
+        normalScale: new THREE.Vector2(0.45, 0.45),
+        roughness: 0.86,
+        sheen: 0.35,
+        sheenRoughness: 0.64,
+        side: THREE.FrontSide,
+        shadowSide: THREE.FrontSide,
       }),
     );
     m.userData.pbrKind = 'cloth';
@@ -2182,6 +2462,9 @@ export function createPronteraMaterials(
     wroughtIron,
     steelArmor,
     darkSteel,
+    gunmetalArmor,
+    forgedBlade,
+    chainmail,
     quiltedLeather,
     darkCoat,
     windowGlow,

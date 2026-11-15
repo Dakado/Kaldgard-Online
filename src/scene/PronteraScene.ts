@@ -190,8 +190,8 @@ export function mountPronteraScene(
   sunLight.shadow.camera.right = shadowHalf;
   sunLight.shadow.camera.top = shadowHalf;
   sunLight.shadow.camera.bottom = -shadowHalf;
-  sunLight.shadow.bias = -0.0004;
-  sunLight.shadow.normalBias = 0.024;
+  sunLight.shadow.bias = -0.0008;
+  sunLight.shadow.normalBias = 0.036;
   scene.add(sunLight);
   scene.add(sunLight.target);
 
@@ -300,9 +300,9 @@ export function mountPronteraScene(
     composer.addPass(new RenderPass(scene, camera));
     bloomPass = new UnrealBloomPass(
       new THREE.Vector2(initW, initH),
-      0.24,
-      0.46,
-      0.85,
+      0.14,
+      0.36,
+      1.52,
     );
     composer.addPass(bloomPass);
     composer.addPass(new OutputPass());
@@ -599,7 +599,7 @@ export function mountPronteraScene(
   const onWheel = (e: WheelEvent) => {
     if (!isPlaying) return;
     e.preventDefault();
-    targetCamDist = THREE.MathUtils.clamp(targetCamDist + e.deltaY * 0.018, 10, 46);
+    targetCamDist = THREE.MathUtils.clamp(targetCamDist + e.deltaY * 0.018, 4.8, 46);
   };
 
   const onContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1489,8 +1489,8 @@ export function mountPronteraScene(
         targetCamPitch = 0.94;
         targetCamDist = 38;
       } else {
-        targetCamPitch = 0.44;
-        targetCamDist = 10.5;
+        targetCamPitch = 0.36;
+        targetCamDist = 7.2;
       }
     },
     resetCameraNorth: () => {

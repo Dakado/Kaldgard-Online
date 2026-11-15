@@ -1334,6 +1334,132 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
     }
   };
 
+  const createStallCanopyGeometry = (
+    width: number,
+    zBack: number,
+    yBack: number,
+    zRidge: number,
+    yRidge: number,
+    zFront: number,
+    yFront: number,
+    thickness = 0.09,
+  ): THREE.BufferGeometry => {
+    const xSegs = 16;
+    const profPts: { z: number; y: number; s: number }[] = [];
+    const backSteps = 6;
+    for (let i = 0; i < backSteps; i++) {
+      const t = i / backSteps;
+      const z = zBack + (zRidge - zBack) * t;
+      const sag = -Math.sin(t * Math.PI) * 0.025;
+      const y = yBack + (yRidge - yBack) * t + sag;
+      profPts.push({ z, y, s: t * 0.36 });
+    }
+    const frontSteps = 8;
+    for (let i = 0; i <= frontSteps; i++) {
+      const t = i / frontSteps;
+      const z = zRidge + (zFront - zRidge) * t;
+      const sag = -Math.sin(t * Math.PI) * 0.032;
+      const y = yRidge + (yFront - yRidge) * t + sag;
+      profPts.push({ z, y, s: 0.36 + t * 0.64 });
+    }
+
+    const zSegs = profPts.length - 1;
+    const cols = xSegs + 1;
+    const rows = zSegs + 1;
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+
+    const topPts: THREE.Vector3[][] = [];
+    const botPts: THREE.Vector3[][] = [];
+
+    for (let r = 0; r < rows; r++) {
+      const p = profPts[r];
+      const pPrev = profPts[Math.max(0, r - 1)];
+      const pNext = profPts[Math.min(zSegs, r + 1)];
+      const tz = pNext.z - pPrev.z;
+      const ty = pNext.y - pPrev.y;
+      const len = Math.max(0.0001, Math.hypot(tz, ty));
+      // Outward upward normal in YZ plane (tangent is +Z, +dY; normal is -dY, +dZ -> Wait: tangent=(0, ty, tz), up=(0, tz, -ty))
+      const ny = tz / len;
+      const nz = -ty / len;
+
+      const tRow: THREE.Vector3[] = [];
+      const bRow: THREE.Vector3[] = [];
+      for (let c = 0; c < cols; c++) {
+        const u = c / xSegs;
+        const x = -width * 0.5 + u * width;
+        // Subtle cloth scallop dip between rafter bays
+        const baySag = -Math.abs(Math.sin(u * Math.PI * 2.0)) * 0.012 * Math.sin(p.s * Math.PI);
+        const top = new THREE.Vector3(x, p.y + baySag, p.z);
+        const bot = new THREE.Vector3(x, p.y + baySag - ny * thickness, p.z - nz * thickness);
+        tRow.push(top);
+        bRow.push(bot);
+      }
+      topPts.push(tRow);
+      botPts.push(bRow);
+    }
+
+    const pushTri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, ua: [number, number], ub: [number, number], uc: [number, number]) => {
+      const base = positions.length / 3;
+      positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+      uvs.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
+      indices.push(base, base + 1, base + 2);
+    };
+
+    // Top (+Y outward CCW: top-right, top-left... wait: in Three.js XZ (+X right, +Z forward):
+    // For face normal +Y: (a=[x0,z0], b=[x0,z1], c=[x1,z1]) => (b-a) x (c-a) = (0,0,+dz) x (+dx,0,+dz) = (+dz*0 - 0, +dx*dz... wait: (0,0,1) x (1,0,0) = (0, +1, 0)!)
+    for (let r = 0; r < zSegs; r++) {
+      const s0 = profPts[r].s;
+      const s1 = profPts[r + 1].s;
+      for (let c = 0; c < xSegs; c++) {
+        const u0 = c / xSegs;
+        const u1 = (c + 1) / xSegs;
+        const t00 = topPts[r][c];
+        const t10 = topPts[r][c + 1];
+        const t01 = topPts[r + 1][c];
+        const t11 = topPts[r + 1][c + 1];
+
+        // Top outer face (+Y normal)
+        pushTri(t00, t01, t11, [u0, s0], [u0, s1], [u1, s1]);
+        pushTri(t00, t11, t10, [u0, s0], [u1, s1], [u1, s0]);
+
+        // Bottom outer face (-Y normal, reversed winding)
+        const b00 = botPts[r][c];
+        const b10 = botPts[r][c + 1];
+        const b01 = botPts[r + 1][c];
+        const b11 = botPts[r + 1][c + 1];
+        pushTri(b00, b11, b01, [u0, s0], [u1, s1], [u0, s1]);
+        pushTri(b00, b10, b11, [u0, s0], [u1, s0], [u1, s1]);
+      }
+
+      // Left cap (-X normal) & Right cap (+X normal)
+      pushTri(topPts[r][0], botPts[r][0], botPts[r + 1][0], [0, s0], [0, s0], [0, s1]);
+      pushTri(topPts[r][0], botPts[r + 1][0], topPts[r + 1][0], [0, s0], [0, s1], [0, s1]);
+
+      pushTri(topPts[r][xSegs], topPts[r + 1][xSegs], botPts[r + 1][xSegs], [1, s0], [1, s1], [1, s1]);
+      pushTri(topPts[r][xSegs], botPts[r + 1][xSegs], botPts[r][xSegs], [1, s0], [1, s1], [1, s0]);
+    }
+
+    // Back eave (-Z cap) & Front eave (+Z cap)
+    for (let c = 0; c < xSegs; c++) {
+      const u0 = c / xSegs;
+      const u1 = (c + 1) / xSegs;
+      pushTri(topPts[0][c], topPts[0][c + 1], botPts[0][c + 1], [u0, 0], [u1, 0], [u1, 0]);
+      pushTri(topPts[0][c], botPts[0][c + 1], botPts[0][c], [u0, 0], [u1, 0], [u0, 0]);
+
+      pushTri(topPts[zSegs][c], botPts[zSegs][c + 1], topPts[zSegs][c + 1], [u0, 1], [u1, 1], [u1, 1]);
+      pushTri(topPts[zSegs][c], botPts[zSegs][c], botPts[zSegs][c + 1], [u0, 1], [u0, 1], [u1, 1]);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  };
+
   for (const stall of MARKET_STALLS) {
     const sg = new THREE.Group();
     sg.position.set(stall.x, 0, stall.z);
@@ -1342,16 +1468,22 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
     const canopyMat = mats.createAwningMaterial(stall.canopyColor, stall.accentColor);
     const solidCanopyMat = new THREE.MeshPhysicalMaterial({
       color: stall.canopyColor,
-      roughness: 0.78,
-      sheen: 0.45,
-      sheenRoughness: 0.55,
+      roughness: 0.84,
+      sheen: 0.35,
+      sheenRoughness: 0.62,
+      side: THREE.FrontSide,
+      shadowSide: THREE.FrontSide,
     });
+    solidCanopyMat.userData.pbrKind = 'cloth';
     const trimMat = new THREE.MeshStandardMaterial({
       color: stall.accentColor,
-      roughness: 0.82,
+      roughness: 0.86,
+      side: THREE.FrontSide,
+      shadowSide: THREE.FrontSide,
     });
+    trimMat.userData.pbrKind = 'cloth';
 
-    // Exact roof anchor coordinates so frontSlope & backSlope meet seamlessly at ridge peak!
+    // Exact roof anchor coordinates so canopy & timber rafters stay cleanly separated (zero Z-fighting!)
     const zBackEave = -1.26;
     const yBackEave = 2.74;
     const zRidge = -0.32;
@@ -1369,115 +1501,104 @@ export function buildPronteraBuildings(mats: PronteraMaterials): THREE.Group {
     const backLen = Math.hypot(dyB, dzB);
     const backAngle = Math.atan2(dyB, dzB);
 
-    // Timber corner posts & braces aligned directly under roof planes
+    // Timber corner posts & rafters seated cleanly 0.13m below the canopy soffit
     for (const px of [-1.88, 1.88]) {
       const backPost = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.098, 2.80, 10),
+        new THREE.CylinderGeometry(0.082, 0.094, 2.72, 10),
         mats.darkTimber,
       );
-      backPost.position.set(px, 1.40, -1.04);
+      backPost.position.set(px, 1.36, -1.04);
       backPost.castShadow = true;
 
       const frontPost = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.098, 2.54, 10),
+        new THREE.CylinderGeometry(0.082, 0.094, 2.48, 10),
         mats.darkTimber,
       );
-      frontPost.position.set(px, 1.27, 1.04);
+      frontPost.position.set(px, 1.24, 1.04);
       frontPost.castShadow = true;
 
-      // Side tie beam between posts
       const tieBeam = new THREE.Mesh(
-        new THREE.BoxGeometry(0.09, 0.09, 2.12),
+        new THREE.BoxGeometry(0.09, 0.09, 2.10),
         mats.darkTimber,
       );
-      tieBeam.position.set(px, 2.46, 0);
+      tieBeam.position.set(px, 2.42, 0);
 
-      // Front sloped rafter flush under frontSlope
       const frontRafter = new THREE.Mesh(
-        new THREE.BoxGeometry(0.10, 0.09, frontLen - 0.04),
+        new THREE.BoxGeometry(0.095, 0.085, frontLen - 0.14),
         mats.darkTimber,
       );
-      frontRafter.position.set(px, (yRidge + yFrontEave) * 0.5 - 0.055, (zRidge + zFrontEave) * 0.5);
+      frontRafter.position.set(px, (yRidge + yFrontEave) * 0.5 - 0.135, (zRidge + zFrontEave) * 0.5);
       frontRafter.rotation.x = frontAngle;
 
-      // Back sloped rafter flush under backSlope
       const backRafter = new THREE.Mesh(
-        new THREE.BoxGeometry(0.10, 0.09, backLen - 0.04),
+        new THREE.BoxGeometry(0.095, 0.085, backLen - 0.14),
         mats.darkTimber,
       );
-      backRafter.position.set(px, (yRidge + yBackEave) * 0.5 - 0.055, (zRidge + zBackEave) * 0.5);
+      backRafter.position.set(px, (yRidge + yBackEave) * 0.5 - 0.135, (zRidge + zBackEave) * 0.5);
       backRafter.rotation.x = -backAngle;
 
       sg.add(backPost, frontPost, tieBeam, frontRafter, backRafter);
     }
 
-    // Wooden ridge beam, front eave beam & back eave beam
-    const ridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(4.26, 0.12, 0.12), mats.darkTimber);
-    ridgeBeam.position.set(0, yRidge - 0.04, zRidge);
-    const frontBeam = new THREE.Mesh(new THREE.BoxGeometry(4.15, 0.10, 0.10), mats.darkTimber);
-    frontBeam.position.set(0, yFrontEave + 0.04, 1.04);
+    const ridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(4.16, 0.11, 0.11), mats.darkTimber);
+    ridgeBeam.position.set(0, yRidge - 0.145, zRidge);
+    const frontBeam = new THREE.Mesh(new THREE.BoxGeometry(4.12, 0.095, 0.095), mats.darkTimber);
+    frontBeam.position.set(0, yFrontEave - 0.05, 1.04);
     sg.add(ridgeBeam, frontBeam);
 
-    // Dual-slope striped awning (zero intersection, exact ridge meeting!)
-    const frontSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.06, frontLen), canopyMat);
-    frontSlope.position.set(0, (yRidge + yFrontEave) * 0.5, (zRidge + zFrontEave) * 0.5);
-    frontSlope.rotation.x = frontAngle;
-    frontSlope.castShadow = true;
-    frontSlope.receiveShadow = true;
-
-    const backSlope = new THREE.Mesh(new THREE.BoxGeometry(4.36, 0.06, backLen), canopyMat);
-    backSlope.position.set(0, (yRidge + yBackEave) * 0.5, (zRidge + zBackEave) * 0.5);
-    backSlope.rotation.x = -backAngle;
-    backSlope.castShadow = true;
-    backSlope.receiveShadow = true;
-
-    // Fabric ridge cap strip sealing the crest cleanly
-    const ridgeCap = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.068, 0.068, 4.40, 10),
-      trimMat,
+    // Watertight FrontSide draped striped awning (single clean continuous mesh, zero shadow acne)
+    const canopyGeo = createStallCanopyGeometry(
+      4.36,
+      zBackEave,
+      yBackEave,
+      zRidge,
+      yRidge,
+      zFrontEave,
+      yFrontEave,
+      0.09,
     );
-    ridgeCap.rotation.z = Math.PI / 2;
-    ridgeCap.position.set(0, yRidge + 0.015, zRidge);
+    const canopyMesh = new THREE.Mesh(canopyGeo, canopyMat);
+    canopyMesh.castShadow = true;
+    canopyMesh.receiveShadow = true;
+    sg.add(canopyMesh);
 
-    sg.add(frontSlope, backSlope, ridgeCap);
-
-    // Side fabric triangular valance flaps sealing the gables
+    // Side fabric triangular valance flaps tucked cleanly beneath the awning eaves
     const sideGableShape = new THREE.Shape();
-    sideGableShape.moveTo(zBackEave, yBackEave - 0.02);
-    sideGableShape.lineTo(zRidge, yRidge - 0.02);
-    sideGableShape.lineTo(zFrontEave, yFrontEave - 0.02);
-    sideGableShape.lineTo(zFrontEave, yFrontEave - 0.22);
-    sideGableShape.lineTo(zBackEave, yBackEave - 0.22);
+    sideGableShape.moveTo(zBackEave + 0.04, yBackEave - 0.11);
+    sideGableShape.lineTo(zRidge, yRidge - 0.11);
+    sideGableShape.lineTo(zFrontEave - 0.04, yFrontEave - 0.11);
+    sideGableShape.lineTo(zFrontEave - 0.04, yFrontEave - 0.27);
+    sideGableShape.lineTo(zBackEave + 0.04, yBackEave - 0.27);
     sideGableShape.closePath();
     const sideGableGeo = new THREE.ExtrudeGeometry(sideGableShape, {
       depth: 0.05,
       bevelEnabled: false,
     });
     sideGableGeo.rotateY(Math.PI / 2);
-    for (const sx of [-2.16, 2.11]) {
+    for (const sx of [-2.12, 2.07]) {
       const sideFlap = new THREE.Mesh(sideGableGeo, solidCanopyMat);
       sideFlap.position.x = sx;
       sg.add(sideFlap);
     }
 
-    // Scalloped alternating valance tabs aligned flush beneath the front eave
+    // Scalloped alternating valance tabs aligned cleanly beneath the front eave soffit
     const tabCount = 9;
     const tabW = 4.32 / tabCount;
     for (let t = 0; t < tabCount; t++) {
       const tx = -2.16 + (t + 0.5) * tabW;
       const tab = new THREE.Mesh(
-        new THREE.CylinderGeometry(tabW * 0.48, tabW * 0.48, 0.06, 10),
+        new THREE.CylinderGeometry(tabW * 0.48, tabW * 0.48, 0.055, 10),
         t % 2 === 0 ? solidCanopyMat : trimMat,
       );
       tab.rotation.x = Math.PI / 2;
-      tab.position.set(tx, yFrontEave - 0.16, zFrontEave - 0.03);
+      tab.position.set(tx, yFrontEave - 0.21, zFrontEave - 0.04);
       sg.add(tab);
 
       const topFill = new THREE.Mesh(
-        new THREE.BoxGeometry(tabW * 0.96, 0.17, 0.06),
+        new THREE.BoxGeometry(tabW * 0.96, 0.15, 0.055),
         t % 2 === 0 ? solidCanopyMat : trimMat,
       );
-      topFill.position.set(tx, yFrontEave - 0.075, zFrontEave - 0.03);
+      topFill.position.set(tx, yFrontEave - 0.135, zFrontEave - 0.04);
       sg.add(topFill);
     }
 
