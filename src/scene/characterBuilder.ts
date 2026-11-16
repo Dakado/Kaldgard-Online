@@ -31,6 +31,8 @@ export interface HeroRig {
   headGroup: THREE.Group;
   backSwordGroup: THREE.Group;
   handSwordGroup: THREE.Group;
+  /** Aktualne nasazena zbran ve slotu ruky (vymenitelna pres setHeroWeapon). */
+  weaponId: string;
   slashArcMesh: THREE.Mesh;
   slashArcMat: THREE.MeshBasicMaterial;
   shadowDisc: THREE.Mesh;
@@ -397,6 +399,128 @@ function buildGreatswordMesh(
   return sword;
 }
 
+export type HeroWeaponId = 'greatsword' | 'arming';
+export const HERO_WEAPON_IDS: HeroWeaponId[] = ['greatsword', 'arming'];
+
+/** Vyska nasazeni zbrane v zadech (pover rotated) aby jilec koukal pres rameno. */
+const HERO_WEAPON_BACK_Y: Record<HeroWeaponId, number> = {
+  greatsword: 0.6,
+  arming: 0.55,
+};
+
+const heroWeaponMats = new WeakMap<HeroRig, PronteraMaterials>();
+
+/**
+ * Postavi drzenou zbran jako samostatny objekt (pocetak = stred rukoveti,
+ * cepel +Y). Stejnou instanci lze pridat do kotvy v ruce GLB hrdiny.
+ */
+export function buildHeroWeaponMesh(id: HeroWeaponId, mats: PronteraMaterials): THREE.Group {
+  const gripMat = new THREE.MeshStandardMaterial({
+    color: 0x2b1e16,
+    roughness: 0.6,
+    metalness: 0.08,
+  });
+  return id === 'arming'
+    ? buildArmingSwordMesh(mats, gripMat)
+    : buildGreatswordMesh(mats, gripMat, 1.16);
+}
+
+/**
+ * Jednorucni rytirsky mec (arming sword) - kratsi cepele, kulova hlavice.
+ * Smlouva slotu: pocatek = stred rukoveti, cepel +Y, jako u buildGreatswordMesh.
+ */
+function buildArmingSwordMesh(
+  mats: PronteraMaterials,
+  leatherMat: THREE.Material,
+  bladeLength = 0.78,
+): THREE.Group {
+  const sword = new THREE.Group();
+
+  const grip = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.016, 0.018, 0.2, 10),
+    leatherMat,
+  );
+  grip.castShadow = true;
+
+  const pommel = new THREE.Mesh(
+    new THREE.SphereGeometry(0.026, 12, 10),
+    mats.darkSteel,
+  );
+  pommel.scale.set(1.0, 0.8, 1.0);
+  pommel.position.y = -0.115;
+
+  const guard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.026, 0.034),
+    mats.darkSteel,
+  );
+  guard.position.y = 0.11;
+  guard.castShadow = true;
+
+  for (const s of [-1, 1]) {
+    const finial = new THREE.Mesh(
+      new THREE.SphereGeometry(0.016, 8, 6),
+      mats.darkSteel,
+    );
+    finial.position.set(s * 0.11, 0.11, 0);
+    sword.add(finial);
+  }
+
+  const blade = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02, 0.03, bladeLength, 4),
+    mats.forgedBlade,
+  );
+  blade.rotation.y = Math.PI / 4;
+  blade.scale.set(1.1, 1.0, 0.22);
+  blade.position.y = 0.11 + bladeLength * 0.5;
+  blade.castShadow = true;
+
+  const fuller = new THREE.Mesh(
+    new THREE.BoxGeometry(0.01, bladeLength * 0.7, 0.012),
+    mats.darkSteel,
+  );
+  fuller.position.y = 0.11 + bladeLength * 0.4;
+
+  const tip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.021, 0.14, 4),
+    mats.forgedBlade,
+  );
+  tip.rotation.y = Math.PI / 4;
+  tip.scale.set(1.1, 1.0, 0.22);
+  tip.position.y = 0.11 + bladeLength + 0.07;
+
+  sword.add(grip, pommel, guard, blade, fuller, tip);
+  return sword;
+}
+
+/**
+ * Vymeni zbran v ruce i na zadech. Zbran je samostatny objekt v kotve ruky,
+ * takze animace ruky ji nese s sebou a jde nahradit jakoukoliv jinou
+ * (externi GLB s pocatkem v rukoveti a cepeli +Y staci pridat do kotvy).
+ */
+export function setHeroWeapon(rig: HeroRig, id: HeroWeaponId): void {
+  const mats = heroWeaponMats.get(rig);
+  if (!mats) return;
+  while (rig.handSwordGroup.children.length > 0) {
+    rig.handSwordGroup.remove(rig.handSwordGroup.children[0]);
+  }
+  while (rig.backSwordGroup.children.length > 2) {
+    rig.backSwordGroup.remove(rig.backSwordGroup.children[2]);
+  }
+  rig.handSwordGroup.add(buildHeroWeaponMesh(id, mats));
+  const backWeapon = buildHeroWeaponMesh(id, mats);
+  backWeapon.rotation.z = Math.PI;
+  backWeapon.position.y = HERO_WEAPON_BACK_Y[id];
+  rig.backSwordGroup.add(backWeapon);
+  rig.weaponId = id;
+}
+
+export function cycleHeroWeapon(rig: HeroRig): HeroWeaponId {
+  const idx = HERO_WEAPON_IDS.indexOf(rig.weaponId as HeroWeaponId);
+  const next = HERO_WEAPON_IDS[(idx + 1) % HERO_WEAPON_IDS.length];
+  setHeroWeapon(rig, next);
+  return next;
+}
+
 /**
  * Sculpts a dark-fantasy V-chevron fluted gothic steel breastplate with
  * sharp central sternum ridge, muscular chest bevels, and narrow athletic waist.
@@ -504,9 +628,9 @@ function createTaperedHairLockGeo(
   geo.translate(0, -length * 0.5, 0);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const rootC = new THREE.Color(0x8e95a1);
-  const midC = new THREE.Color(0xb2b9c4);
-  const tipC = new THREE.Color(0xcbd1da);
+  const rootC = new THREE.Color(0xb9bec8);
+  const midC = new THREE.Color(0xdde1e8);
+  const tipC = new THREE.Color(0xf2f4f8);
   const tmpC = new THREE.Color();
 
   for (let i = 0; i < pos.count; i++) {
@@ -556,11 +680,9 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   shadowDisc.position.y = 0.03;
   root.add(shadowDisc);
 
-  const trouserMat = new THREE.MeshStandardMaterial({
-    color: 0x2a211b,
-    roughness: 0.90,
-    metalness: 0.02,
-  });
+  // Prošívaná zbrojní vesta/nohavice misto ploche barvy (sdilena kvalitni textura).
+  const trouserMat = mats.quiltedLeather.clone();
+  trouserMat.color.set(0x9c8468);
   trouserMat.userData.pbrKind = 'cloth';
 
   const beltLeatherMat = new THREE.MeshPhysicalMaterial({
@@ -591,31 +713,91 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   });
   tatteredClothMat.userData.pbrKind = 'cloth';
 
+  // Skladana latka (vertikalni faldiky + sum) pro plast a spodni zastery.
+  const clothFoldTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const x = c.getContext('2d')!;
+    x.fillStyle = '#333a30';
+    x.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 256; i++) {
+      const s = 0.5 + 0.5 * Math.sin((i / 256) * Math.PI * 7 + 0.6);
+      x.fillStyle = `rgba(0,0,0,${(0.26 * s).toFixed(3)})`;
+      x.fillRect(i, 0, 1, 256);
+      x.fillStyle = `rgba(255,255,255,${(0.05 * (1 - s)).toFixed(3)})`;
+      x.fillRect((i + 2) % 256, 0, 1, 256);
+    }
+    for (let n = 0; n < 900; n++) {
+      const gx = Math.floor(Math.random() * 256);
+      const gy = Math.floor(Math.random() * 256);
+      x.fillStyle = `rgba(${Math.random() > 0.5 ? '255,255,255' : '0,0,0'},0.045)`;
+      x.fillRect(gx, gy, 1, 1);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  tatteredClothMat.map = clothFoldTex;
+  tatteredClothMat.color.set(0xffffff);
+
+  // Predni zelena tunika s tmavym lemem (misto heraldickeho krize).
+  const tabardHeraldTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const x = c.getContext('2d')!;
+    x.fillStyle = '#3d4c3a';
+    x.fillRect(0, 0, 256, 256);
+    for (let n = 0; n < 1100; n++) {
+      const gx = Math.floor(Math.random() * 256);
+      const gy = Math.floor(Math.random() * 256);
+      x.fillStyle = `rgba(${Math.random() > 0.5 ? '255,255,255' : '0,0,0'},0.05)`;
+      x.fillRect(gx, gy, 1, 1);
+    }
+    x.strokeStyle = '#2c352a';
+    x.lineWidth = 12;
+    x.strokeRect(8, 8, 240, 240);
+    x.fillStyle = 'rgba(0,0,0,0.18)';
+    x.fillRect(0, 200, 256, 56);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const tabardMat = new THREE.MeshPhysicalMaterial({
+    map: tabardHeraldTex,
+    roughness: 0.86,
+    metalness: 0.02,
+    sheen: 0.35,
+    sheenRoughness: 0.7,
+    side: THREE.DoubleSide,
+  });
+  tabardMat.userData.pbrKind = 'cloth';
+
   const armorTrimMat = new THREE.MeshStandardMaterial({
-    color: 0x9aa4b2,
-    roughness: 0.34,
-    metalness: 0.74,
-    envMapIntensity: 0.86,
+    color: 0xbcc7d4,
+    roughness: 0.28,
+    metalness: 0.85,
+    envMapIntensity: 1.2,
   });
   armorTrimMat.userData.pbrKind = 'metal';
   armorTrimMat.userData.lockEnvIntensity = true;
 
   const skinMat = new THREE.MeshPhysicalMaterial({
-    color: 0xc99679,
-    roughness: 0.56,
+    color: 0x4e465c,
+    roughness: 0.58,
     metalness: 0.02,
     sheen: 0.22,
     sheenRoughness: 0.72,
-    sheenColor: new THREE.Color(0xffb599),
+    sheenColor: new THREE.Color(0x8a7fa0),
   });
   skinMat.userData.pbrKind = 'skin';
 
-  // Silver-grey / ash layered parted hair with vertex-colored darker slate roots
+  // Silver-white layered swept-back hair with darker ash roots
   const silverHairMat = new THREE.MeshStandardMaterial({
-    color: 0xd4dae2,
+    color: 0xe2e6ec,
     vertexColors: true,
-    roughness: 0.62,
-    metalness: 0.08,
+    roughness: 0.58,
+    metalness: 0.06,
   });
   silverHairMat.userData.pbrKind = 'cloth';
 
@@ -636,8 +818,8 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   pelvisGroup.add(torsoGroup);
 
   // Articulated Hip -> Knee -> Ankle Legs with Laminated Thigh Tassets, Knee Poleyns & V-Fluted Greaves
-  const thighGeo = createMuscleLimbGeo(0.094, 0.086, 0.068, 0.47, 22);
-  const shinGeo = createMuscleLimbGeo(0.074, 0.070, 0.052, 0.44, 22);
+  const thighGeo = createMuscleLimbGeo(0.102, 0.092, 0.07, 0.47, 22);
+  const shinGeo = createMuscleLimbGeo(0.08, 0.075, 0.055, 0.44, 22);
   const bootFootGeo = createSculptedBootFootGeo();
 
   const makeLeg = (side: number) => {
@@ -778,7 +960,7 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   backClothApron.rotation.y = Math.PI;
   pelvisGroup.add(backClothApron);
 
-  const frontClothUnder = new THREE.Mesh(createTatteredApronGeo(0.25, 0.50), tatteredClothMat);
+  const frontClothUnder = new THREE.Mesh(createTatteredApronGeo(0.32, 0.52), tabardMat);
   frontClothUnder.position.set(0, -0.02, 0.118);
   pelvisGroup.add(frontClothUnder);
 
@@ -815,6 +997,70 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   );
   beltBuckle.position.set(-0.02, 0.085, 0.135);
   pelvisGroup.add(beltBuckle);
+
+  // Ocelove cvočky po obvodu opasku.
+  for (let i = -4; i <= 4; i++) {
+    const a = i * 0.22;
+    const stud = new THREE.Mesh(
+      new THREE.SphereGeometry(0.011, 8, 6),
+      armorTrimMat,
+    );
+    stud.position.set(Math.sin(a) * 0.176, 0.085, Math.cos(a) * 0.138);
+    pelvisGroup.add(stud);
+  }
+
+  // Zavesne reminky + kapsar na LEVEM boku + dyka na PRAVEM boku.
+  for (const s of [-1, 1]) {
+    const strap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.032, 0.15, 0.014),
+      beltLeatherMat,
+    );
+    strap.position.set(s * 0.055, -0.06, 0.135);
+    strap.rotation.x = 0.06;
+    strap.castShadow = true;
+    pelvisGroup.add(strap);
+  }
+  const pouch = new THREE.Mesh(
+    new THREE.BoxGeometry(0.09, 0.11, 0.05),
+    darkLeatherMat,
+  );
+  pouch.position.set(-0.255, 0.0, 0.05);
+  pouch.rotation.y = 0.2;
+  pouch.castShadow = true;
+  pelvisGroup.add(pouch);
+  const pouchButton = new THREE.Mesh(
+    new THREE.SphereGeometry(0.012, 8, 6),
+    armorTrimMat,
+  );
+  pouchButton.position.set(-0.25, 0.03, 0.077);
+  pelvisGroup.add(pouchButton);
+
+  // Mala pobocni dyka na pravem boku (jilec nahoru, cepel do pouzdra).
+  // Cela skupina vysunuta vne nabedernich platu, spicka mirne ke stehnu.
+  const daggerGroup = new THREE.Group();
+  daggerGroup.position.set(0.26, 0.06, 0.04);
+  daggerGroup.rotation.z = -0.22;
+  pelvisGroup.add(daggerGroup);
+  const daggerGrip = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.014, 0.016, 0.09, 10),
+    beltLeatherMat,
+  );
+  daggerGrip.position.y = 0.04;
+  daggerGrip.castShadow = true;
+  daggerGroup.add(daggerGrip);
+  const daggerGuard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.07, 0.016, 0.024),
+    mats.darkSteel,
+  );
+  daggerGuard.position.y = -0.005;
+  daggerGroup.add(daggerGuard);
+  const daggerBlade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.024, 0.15, 0.01),
+    mats.forgedBlade,
+  );
+  daggerBlade.position.y = -0.085;
+  daggerBlade.castShadow = true;
+  daggerGroup.add(daggerBlade);
 
   // Sculped Gothic V-Chevron Gunmetal Breastplate + High Armored Gorget in TorsoGroup
   const cuirassGeo = createGothicCuirassGeo();
@@ -885,7 +1131,38 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   standCollar.position.y = 0.59;
   torsoGroup.add(standCollar);
 
-  // Diagonal Back Sword Baldric Strap across chest & back
+  // Zeleny satek kolem ramen (elfsky sal) pres zbroj.
+  const scarfMat = new THREE.MeshPhysicalMaterial({
+    color: 0x44513c,
+    roughness: 0.9,
+    metalness: 0.02,
+    sheen: 0.4,
+    sheenRoughness: 0.7,
+    side: THREE.DoubleSide,
+  });
+  scarfMat.userData.pbrKind = 'cloth';
+  const shoulderScarf = new THREE.Mesh(
+    new THREE.TorusGeometry(0.155, 0.042, 10, 28),
+    scarfMat,
+  );
+  shoulderScarf.rotation.x = Math.PI / 2;
+  shoulderScarf.scale.set(1.05, 0.9, 0.75);
+  shoulderScarf.position.y = 0.53;
+  shoulderScarf.castShadow = true;
+  torsoGroup.add(shoulderScarf);
+
+  // Zkrizene kozene pasy pres hrud + diagonalni zadni pas na mec.
+  for (const s of [-1, 1]) {
+    const chestStrap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.055, 0.5, 0.016),
+      beltLeatherMat,
+    );
+    chestStrap.position.set(s * 0.03, 0.3, 0.19);
+    chestStrap.rotation.z = -s * 0.5;
+    chestStrap.rotation.x = -0.08;
+    chestStrap.castShadow = true;
+    torsoGroup.add(chestStrap);
+  }
   const baldricCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(0.155, 0.52, 0.115),
     new THREE.Vector3(0.01, 0.30, 0.165),
@@ -904,7 +1181,7 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   // Symmetrical 4-Lame Winged Gothic Shoulder Pauldrons (L & R)
   for (const s of [-1, 1]) {
     const pauldron = new THREE.Group();
-    pauldron.position.set(s * 0.252, 0.505, 0);
+    pauldron.position.set(s * 0.24, 0.505, 0);
     pauldron.rotation.z = -s * 0.32;
 
     // Upturned signature gothic inner wing blade rising near collarbone/shoulder
@@ -920,12 +1197,12 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
 
     // 4 overlapping articulated horizontal curved steel shoulder lames
     for (let lame = 0; lame < 4; lame++) {
-      const r = 0.136 - lame * 0.011;
+      const r = 0.12 - lame * 0.01;
       const plate = new THREE.Mesh(
         new THREE.SphereGeometry(r, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.54),
         mats.gunmetalArmor,
       );
-      plate.scale.set(1.10, 0.78, 1.15);
+      plate.scale.set(1.05, 0.62, 1.1);
       plate.position.set(s * lame * 0.016, -lame * 0.044, 0);
       plate.castShadow = true;
       pauldron.add(plate);
@@ -942,8 +1219,8 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   }
 
   // Articulated Chainmail Sleeves + Flared Winged Gothic Vambraces & Gauntlets
-  const upperArmGeo = createMuscleLimbGeo(0.066, 0.062, 0.050, 0.29, 18);
-  const vambraceGeo = createMuscleLimbGeo(0.060, 0.055, 0.042, 0.26, 18);
+  const upperArmGeo = createMuscleLimbGeo(0.078, 0.072, 0.058, 0.29, 18);
+  const vambraceGeo = createMuscleLimbGeo(0.07, 0.064, 0.05, 0.26, 18);
 
   const makeArm = (side: number) => {
     const shoulder = new THREE.Group();
@@ -995,6 +1272,15 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
     );
     wristStrap.position.y = -0.21;
     elbow.add(wristStrap);
+
+    // Rozsirena pancerova manzeta pres zapesti (rukavice pod ni).
+    const gauntletCuff = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.078, 0.06, 0.1, 14),
+      mats.gunmetalArmor,
+    );
+    gauntletCuff.position.y = -0.245;
+    gauntletCuff.castShadow = true;
+    elbow.add(gauntletCuff);
 
     addSculptedHand(elbow, -0.27, mats.gunmetalArmor, mats.darkSteel, armorTrimMat, 0.98);
     return { shoulder, elbow };
@@ -1048,15 +1334,14 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   backChape.rotation.x = Math.PI;
   backChape.position.y = -0.78;
 
-  // Flip greatsword upside down inside scabbard so grip+pommel protrude cleanly over shoulder (-X when z=0.50) and blade rests downward inside sheath
-  const backSwordVisual = buildGreatswordMesh(mats, beltLeatherMat, 1.00);
-  backSwordVisual.rotation.z = Math.PI;
-  backSwordVisual.position.y = 0.60;
-  backSwordGroup.add(backScabbard, backChape, backSwordVisual);
+  // Kotva zbrane na zadech: pouzdro + chranitko jsou pevne, mec se dosazuje
+  // pres setHeroWeapon (otoceny hlavici vzhuru, cepel v pouzdre).
+  backSwordGroup.add(backScabbard, backChape);
   torsoGroup.add(backSwordGroup);
 
-  // Held Right-Hand Gothic Greatsword
-  const handSwordGroup = buildGreatswordMesh(mats, beltLeatherMat, 1.16);
+  // Kotva zbrane v ruce: drzi klidovou transformaci rukoveti (mece se meni,
+  // ruka s kotvou hybe pri chuzi i pri vsech 3 utocich).
+  const handSwordGroup = new THREE.Group();
   handSwordGroup.position.set(0.0, -0.29, 0.034);
   handSwordGroup.rotation.x = Math.PI * 0.44;
   handSwordGroup.visible = false;
@@ -1097,7 +1382,7 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   slashArcMesh.visible = false;
   torsoGroup.add(slashArcMesh);
 
-  // Rugged Warrior Head + Parted Shoulder-Length Silver-Grey Hair (y = 0.75 above torso = ~1.84m total height)
+  // Dark-elven head: cista tvar bez vousu, spicate usi, blede oci.
   const headGroup = new THREE.Group();
   headGroup.position.set(0, 0.75, 0.01);
   torsoGroup.add(headGroup);
@@ -1113,16 +1398,20 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   heroCranium.castShadow = true;
   headGroup.add(heroCranium);
 
-  addSculptedBeard(headGroup, stubbleMat, 'stubble', 0.91);
-
   for (const s of [-1, 1]) {
     const ear = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), skinMat);
-    ear.scale.set(0.38, 1.15, 0.68);
-    ear.position.set(s * 0.104, -0.008, -0.006);
+    ear.scale.set(0.34, 1.1, 0.6);
+    ear.position.set(s * 0.104, -0.004, -0.008);
     headGroup.add(ear);
+    // Spicata elfsky spicka smerem ven a nahoru.
+    const earTip = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.055, 8), skinMat);
+    earTip.position.set(s * 0.122, 0.032, -0.01);
+    earTip.rotation.z = -s * 1.15;
+    earTip.castShadow = true;
+    headGroup.add(earTip);
   }
 
-  addRealisticEyesAndBrows(headGroup, 0x4b5c6e, 0x4e4a47, 0.80);
+  addRealisticEyesAndBrows(headGroup, 0xd5dae2, 0x2e2a24, 0.8);
 
   // Subtle heavy brow shadow ridge for fierce dark-fantasy expression
   const browShadow = new THREE.Mesh(
@@ -1132,12 +1421,33 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   browShadow.position.set(0, 0.028, 0.106);
   headGroup.add(browShadow);
 
-  // Layered Tapered Silver-Grey Parted Hair (natural ribbon strands framing forehead & jaw)
+  // Scesane dozadu: zadne clonky pres celo, vse splývá dozadu pres usi a zada.
+  const hairLockSpecs: {
+    pos: [number, number, number];
+    rot: [number, number, number];
+    len: number;
+    w: number;
+    t: number;
+    arch: number;
+    flare: number;
+    curl: number;
+  }[] = [
+    // Bocni prameny scesane dozadu kolem usi
+    { pos: [-0.096, 0.07, -0.01], rot: [0.05, -2.05, -0.1], len: 0.225, w: 0.06, t: 0.017, arch: 0.02, flare: -0.012, curl: 0.01 },
+    { pos: [0.096, 0.07, -0.01], rot: [0.05, 2.05, 0.1], len: 0.225, w: 0.06, t: 0.017, arch: 0.02, flare: 0.012, curl: 0.01 },
+    // Zadni splývave vrstvy
+    { pos: [-0.062, 0.062, -0.088], rot: [-0.16, -2.6, -0.06], len: 0.26, w: 0.07, t: 0.018, arch: 0.018, flare: -0.01, curl: -0.01 },
+    { pos: [0.062, 0.062, -0.088], rot: [-0.16, 2.6, 0.06], len: 0.26, w: 0.07, t: 0.018, arch: 0.018, flare: 0.01, curl: -0.01 },
+    { pos: [0.0, 0.068, -0.112], rot: [-0.22, Math.PI, 0], len: 0.285, w: 0.09, t: 0.019, arch: 0.018, flare: 0, curl: -0.015 },
+    { pos: [-0.032, 0.078, -0.104], rot: [-0.2, -2.95, -0.03], len: 0.235, w: 0.062, t: 0.016, arch: 0.014, flare: -0.006, curl: -0.008 },
+    { pos: [0.032, 0.078, -0.104], rot: [-0.2, 2.95, 0.03], len: 0.235, w: 0.062, t: 0.016, arch: 0.014, flare: 0.006, curl: -0.008 },
+  ];
+  // Stazena koruna vlasu dozadu (zadni objem, celo volne)
   const crownCapGeo = new THREE.SphereGeometry(0.122, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.54);
   const capPos = crownCapGeo.attributes.position;
   const capCol = new Float32Array(capPos.count * 3);
-  const cTop = new THREE.Color(0xb8bec8);
-  const cSide = new THREE.Color(0x8a919d);
+  const cTop = new THREE.Color(0xd4d9e0);
+  const cSide = new THREE.Color(0x9aa0ab);
   const cMix = new THREE.Color();
   for (let i = 0; i < capPos.count; i++) {
     const cx = capPos.getX(i);
@@ -1156,38 +1466,13 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
   crownCapGeo.setAttribute('color', new THREE.BufferAttribute(capCol, 3));
   crownCapGeo.computeVertexNormals();
   const hairCrown = new THREE.Mesh(crownCapGeo, silverHairMat);
-  hairCrown.scale.set(0.94, 0.98, 1.03);
+  hairCrown.scale.set(0.9, 0.96, 1.0);
   hairCrown.rotation.x = 0.06; // Tilted slightly forward to cover upper forehead naturally
   hairCrown.position.set(0, 0.018, 0.004);
   hairCrown.castShadow = true;
   headGroup.add(hairCrown);
 
-  // Tapered center-parted front curtains + layered cheek/neck/nape locks
-  const hairLockSpecs: {
-    pos: [number, number, number];
-    rot: [number, number, number];
-    len: number;
-    w: number;
-    t: number;
-    arch: number;
-    flare: number;
-    curl: number;
-  }[] = [
-    // Front center-parted locks sweeping forward & outward past temples (framing forehead cleanly above eyes)
-    { pos: [-0.020, 0.114, 0.088], rot: [0.22, -0.25, -0.26], len: 0.125, w: 0.056, t: 0.016, arch: 0.022, flare: -0.042, curl: 0.008 },
-    { pos: [0.020, 0.114, 0.088], rot: [0.22, 0.25, 0.26], len: 0.125, w: 0.056, t: 0.016, arch: 0.022, flare: 0.042, curl: 0.008 },
-    { pos: [-0.062, 0.096, 0.072], rot: [0.14, -0.68, -0.18], len: 0.175, w: 0.056, t: 0.017, arch: 0.022, flare: -0.028, curl: 0.014 },
-    { pos: [0.062, 0.096, 0.072], rot: [0.14, 0.68, 0.18], len: 0.175, w: 0.056, t: 0.017, arch: 0.022, flare: 0.028, curl: 0.014 },
-    // Jaw & ear-framing layered side locks
-    { pos: [-0.102, 0.062, 0.012], rot: [0.08, -1.42, -0.12], len: 0.210, w: 0.062, t: 0.018, arch: 0.018, flare: -0.012, curl: 0.010 },
-    { pos: [0.102, 0.062, 0.012], rot: [0.08, 1.42, 0.12], len: 0.210, w: 0.062, t: 0.018, arch: 0.018, flare: 0.012, curl: 0.010 },
-    // Rear shoulder-length layered silver locks draping seamlessly over collar/back
-    { pos: [-0.070, 0.054, -0.082], rot: [-0.18, -2.42, -0.08], len: 0.235, w: 0.074, t: 0.019, arch: 0.018, flare: -0.010, curl: -0.010 },
-    { pos: [0.070, 0.054, -0.082], rot: [-0.18, 2.42, 0.08], len: 0.235, w: 0.074, t: 0.019, arch: 0.018, flare: 0.010, curl: -0.010 },
-    { pos: [0.0, 0.060, -0.108], rot: [-0.22, Math.PI, 0], len: 0.245, w: 0.092, t: 0.020, arch: 0.018, flare: 0, curl: -0.015 },
-    { pos: [-0.036, 0.074, -0.102], rot: [-0.20, -2.85, -0.04], len: 0.215, w: 0.064, t: 0.017, arch: 0.014, flare: -0.006, curl: -0.008 },
-    { pos: [0.036, 0.074, -0.102], rot: [-0.20, 2.85, 0.04], len: 0.215, w: 0.064, t: 0.017, arch: 0.014, flare: 0.006, curl: -0.008 },
-  ];
+  // Prameny scesane dozadu (definovane vyse) se osadi sem.
   for (const spec of hairLockSpecs) {
     const lockGeo = createTaperedHairLockGeo(
       spec.len,
@@ -1204,7 +1489,7 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
     headGroup.add(lock);
   }
 
-  return {
+  const rig: HeroRig = {
     root,
     bodyGroup,
     pelvisGroup,
@@ -1226,10 +1511,14 @@ export function buildHeroCharacter(mats: PronteraMaterials): HeroRig {
     headGroup,
     backSwordGroup,
     handSwordGroup,
+    weaponId: 'greatsword',
     slashArcMesh,
     slashArcMat,
     shadowDisc,
   };
+  heroWeaponMats.set(rig, mats);
+  setHeroWeapon(rig, 'greatsword');
+  return rig;
 }
 
 export function animateHeroGait(
@@ -1343,44 +1632,58 @@ export function animateHeroGait(
   }
   cPos.needsUpdate = true;
 
+  updateHeroSlashArc(rig, attackState);
+
   if (attackState && attackState.timer > 0) {
     const p = 1 - Math.max(0, Math.min(1, attackState.timer / attackState.duration));
     const combo = attackState.comboIndex % 3;
 
     if (combo === 0) {
-      const sweep = Math.sin(p * Math.PI);
       rig.rightArm.rotation.x = -1.35 + p * 2.15;
       rig.rightArm.rotation.z = -0.82 + p * 1.45;
       rig.rightArm.rotation.y = 0.85 - p * 1.95;
       rig.rightElbow.rotation.x = -0.45 + p * 0.25;
       rig.torsoGroup.rotation.y = 0.48 - p * 1.05;
       rig.leftArm.rotation.x = -0.45;
-      rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
-      rig.slashArcMesh.rotation.set(0.18, p * 2.3 - 1.15, -0.20);
-      rig.slashArcMesh.scale.setScalar(1.0);
-      rig.slashArcMat.color.setHex(0xd8ecff);
-      rig.slashArcMat.opacity = sweep * 0.52;
     } else if (combo === 1) {
-      const sweep = Math.sin(p * Math.PI);
       rig.rightArm.rotation.x = -1.15 + Math.sin(p * Math.PI) * 0.45;
       rig.rightArm.rotation.z = 0.85 - p * 1.75;
       rig.rightArm.rotation.y = -1.05 + p * 2.1;
       rig.rightElbow.rotation.x = -0.35;
       rig.torsoGroup.rotation.y = -0.48 + p * 1.05;
-      rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
-      rig.slashArcMesh.rotation.set(-0.18, -p * 2.3 + 1.15, 0.24);
-      rig.slashArcMesh.scale.setScalar(1.05);
-      rig.slashArcMat.color.setHex(0xbde2ff);
-      rig.slashArcMat.opacity = sweep * 0.52;
     } else {
       const hop = Math.sin(p * Math.PI) * 0.18;
-      const sweep = Math.sin(p * Math.PI);
       rig.pelvisGroup.position.y += hop;
       rig.rightArm.rotation.x = -1.95 + p * 2.65;
       rig.rightArm.rotation.z = -0.15;
       rig.rightArm.rotation.y = 0;
       rig.rightElbow.rotation.x = -0.32;
       rig.torsoGroup.rotation.x = -0.10 + p * 0.28;
+    }
+  } else {
+    rig.bodyGroup.rotation.x += (0 - rig.bodyGroup.rotation.x) * k;
+  }
+}
+
+export function updateHeroSlashArc(rig: HeroRig, attackState?: HeroAttackAnimState): void {
+  if (attackState && attackState.timer > 0) {
+    const p = 1 - Math.max(0, Math.min(1, attackState.timer / attackState.duration));
+    const combo = attackState.comboIndex % 3;
+    const sweep = Math.sin(p * Math.PI);
+
+    if (combo === 0) {
+      rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
+      rig.slashArcMesh.rotation.set(0.18, p * 2.3 - 1.15, -0.20);
+      rig.slashArcMesh.scale.setScalar(1.0);
+      rig.slashArcMat.color.setHex(0xd8ecff);
+      rig.slashArcMat.opacity = sweep * 0.52;
+    } else if (combo === 1) {
+      rig.slashArcMesh.visible = p > 0.14 && p < 0.86;
+      rig.slashArcMesh.rotation.set(-0.18, -p * 2.3 + 1.15, 0.24);
+      rig.slashArcMesh.scale.setScalar(1.05);
+      rig.slashArcMat.color.setHex(0xbde2ff);
+      rig.slashArcMat.opacity = sweep * 0.52;
+    } else {
       rig.slashArcMesh.visible = p > 0.18 && p < 0.88;
       rig.slashArcMesh.rotation.set(p * 1.7 - 0.55, 0, Math.PI * 0.5);
       rig.slashArcMesh.scale.setScalar(1.22);
@@ -1388,7 +1691,6 @@ export function animateHeroGait(
       rig.slashArcMat.opacity = sweep * 0.58;
     }
   } else {
-    rig.bodyGroup.rotation.x += (0 - rig.bodyGroup.rotation.x) * k;
     rig.slashArcMesh.visible = false;
     rig.slashArcMat.opacity = 0;
   }

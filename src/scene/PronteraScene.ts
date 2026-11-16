@@ -5,9 +5,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { PronteraAudio } from '../audio/ambientAudio';
 import {
+  ARCHER_ATTACK_COOLDOWN,
+  ARCHER_RANGED_RANGE,
   SWORDSMAN_ATTACK_COOLDOWN,
   SWORDSMAN_MELEE_RANGE,
   applyDamageToMob,
+  computeArrowDamage,
   computeSwordDamage,
   expForNextLevel,
   findNearestAliveMob,
@@ -42,11 +45,27 @@ import {
   HeroAttackAnimState,
   MobActor,
   animateHeroGait,
+  updateHeroSlashArc,
   buildFieldMobs,
   buildHeroCharacter,
+  buildHeroWeaponMesh,
   buildNpcCharacter,
+  cycleHeroWeapon,
+  HERO_WEAPON_IDS,
 } from './characterBuilder';
+import {
+  ArcherRig,
+  FlyingArrow,
+  animateArcherGait,
+  buildArrowMesh,
+  buildElvenArcherCharacter,
+} from './archerBuilder';
+import { loadArcherGlb, animateArcherGlb } from './archerGlb';
+import type { ArcherGlbModel } from './archerGlb';
 import { BuiltFieldZone, buildFieldZoneScene } from './fieldMapBuilder';
+import { animateHeroModel, loadHeroGlb, setGlbWeapon } from './heroGlb';
+import type { HeroGlbModel } from './heroGlb';
+import { buildMuldgardZone } from './muldgardBuilder';
 import { createPronteraMaterials } from './materials';
 import {
   createDiabloEnvironmentRig,
@@ -58,7 +77,11 @@ import { WeatherMode, createWeatherSystem } from './weatherSystem';
 
 export type TimeOfDay = 'day' | 'sunset' | 'evening';
 export type CameraPreset = 'classic' | 'wide' | 'close';
+export type HeroClass = 'swordsman' | 'archer';
 export type { WeatherMode, ZoneId };
+
+/** Vertikalni offset hrdiny nad teren - podrazka + dohoupnuti, at nohy nejsou v dlazbe. */
+const HERO_GROUND_LIFT = 0.06;
 
 export interface CombatPopup {
   id: number;
@@ -78,6 +101,7 @@ export interface TargetMobSnapshot {
 }
 
 export interface HudSnapshot {
+  heroClass: HeroClass;
   zoneId: ZoneId;
   zoneName: string;
   x: number;
@@ -106,8 +130,11 @@ export interface PronteraController {
   warpToZone: (zoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => void;
   walkToWorldPoint: (x: number, z: number) => void;
   attackNearest: () => void;
+  toggleHeroClass: () => HeroClass;
+  setHeroClass: (cls: HeroClass) => void;
   toggleMute: () => boolean;
   dispose: () => void;
+  _debug?: any;
 }
 
 const _vec3A = new THREE.Vector3();
@@ -261,6 +288,16 @@ export function mountPronteraScene(
   // Active Zone Dynamic References (swapped cleanly when walking through Portals)
   let activeZoneId: ZoneId = 'prontera';
   let activeFieldZone: BuiltFieldZone | null = null;
+  // Muldgard je druhá cachovaná městská zóna (UI teleport, žádné fyzické portály)
+  let muldgardGroup: THREE.Group | null = null;
+  let muldgardGroundPick: THREE.Mesh | null = null;
+  let muldgardWater: THREE.Mesh[] = [];
+  let muldgardMobActors: MobActor[] = [];
+  let muldgardMobHitTargets: THREE.Mesh[] = [];
+  let muldgardMobById = new Map<string, MobActor>();
+  let muldgardLanternLights: THREE.PointLight[] = [];
+  let muldgardLanternHalos: THREE.Sprite[] = [];
+  let muldgardDisposeFn: (() => void) | null = null;
   let activeNav: NavigationGrid = PRONTERA_NAV;
   let activeGroundPickMesh: THREE.Mesh = pronteraGroundPick;
   let activeWaterMeshes: THREE.Mesh[] = pronteraMoatWater;
@@ -272,9 +309,51 @@ export function mountPronteraScene(
   let activeLanternHalos: THREE.Sprite[] = pronteraLanternHalos;
 
   const hero = buildHeroCharacter(mats);
-  hero.root.position.set(PLAYER_SPAWN.x, 0, PLAYER_SPAWN.z);
+  hero.root.position.set(PLAYER_SPAWN.x, HERO_GROUND_LIFT, PLAYER_SPAWN.z);
   hero.root.rotation.y = PLAYER_SPAWN.yaw;
   scene.add(hero.root);
+
+  // Elfí hraničářka / lučištnice
+  const archer = buildElvenArcherCharacter(mats);
+  archer.root.position.set(PLAYER_SPAWN.x, HERO_GROUND_LIFT, PLAYER_SPAWN.z);
+  archer.root.rotation.y = PLAYER_SPAWN.yaw;
+  archer.root.visible = false;
+  scene.add(archer.root);
+
+  let activeHeroClass: HeroClass = 'swordsman';
+  const flyingArrows: FlyingArrow[] = [];
+  let arrowIdCounter = 1;
+
+  // Profi GLB hrdina (Mixamo paladin) - procedurani postava zustava jako fallback.
+  let heroModel: HeroGlbModel | null = null;
+  loadHeroGlb()
+    .then((model) => {
+      if (disposed) return;
+      heroModel = model;
+      hero.bodyGroup.visible = false;
+      hero.root.add(model.root);
+      setGlbWeapon(model, buildHeroWeaponMesh('greatsword', mats), 'greatsword');
+      if (activeHeroClass === 'archer') {
+        model.root.visible = false;
+      }
+      (window as unknown as { __heroModel?: HeroGlbModel }).__heroModel = model;
+    })
+    .catch((err) => console.error('Nepodařilo se načíst swordsman_blender.glb', err));
+
+  // Trellis 2 3D Elfí hraničářka (GLB s 700k polygony a PBR texturami)
+  let archerModel: ArcherGlbModel | null = null;
+  loadArcherGlb()
+    .then((model) => {
+      if (disposed) return;
+      archerModel = model;
+      archer.bodyGroup.visible = false;
+      archer.root.add(model.root);
+      if (activeHeroClass === 'swordsman') {
+        model.root.visible = false;
+      }
+      (window as unknown as { __archerModel?: ArcherGlbModel }).__archerModel = model;
+    })
+    .catch((err) => console.log('Elven archer GLB načítání:', err));
 
   const cursorRingMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.75, 1.75),
@@ -397,15 +476,130 @@ export function mountPronteraScene(
     if (activePopups.length > 10) activePopups.shift();
   };
 
-  const performSwordSwing = (mob: MobActor | null) => {
+  const getAttackRange = () =>
+    activeHeroClass === 'archer' ? ARCHER_RANGED_RANGE : SWORDSMAN_MELEE_RANGE;
+
+  const getAttackCooldown = () =>
+    activeHeroClass === 'archer' ? ARCHER_ATTACK_COOLDOWN : SWORDSMAN_ATTACK_COOLDOWN;
+
+  const setHeroClass = (cls: HeroClass) => {
+    activeHeroClass = cls;
+    if (cls === 'swordsman') {
+      hero.root.visible = true;
+      if (heroModel) {
+        heroModel.root.visible = true;
+        hero.bodyGroup.visible = false;
+      } else {
+        hero.bodyGroup.visible = true;
+      }
+      archer.root.visible = false;
+      if (archerModel) archerModel.root.visible = false;
+      spawnPopup('Třída: Rytíř / Šermíř ⚔️', 'reward', playerX, zoneHeightAt(activeZoneId, playerX, playerZ) + 2.1, playerZ);
+    } else {
+      hero.root.visible = false;
+      if (heroModel) heroModel.root.visible = false;
+      archer.root.visible = true;
+      if (archerModel) {
+        archerModel.root.visible = true;
+        archer.bodyGroup.visible = false;
+      }
+      spawnPopup('Třída: Elfí hraničářka 🏹', 'reward', playerX, zoneHeightAt(activeZoneId, playerX, playerZ) + 2.1, playerZ);
+    }
+    emitHudSnapshot();
+  };
+
+  const toggleHeroClass = () => {
+    const next = activeHeroClass === 'swordsman' ? 'archer' : 'swordsman';
+    setHeroClass(next);
+    audio.playMoveClick();
+    return next;
+  };
+
+  const shootArrow = () => {
+    const startY = zoneHeightAt(activeZoneId, playerX, playerZ) + 1.28;
+    const startPos = new THREE.Vector3(playerX, startY, playerZ);
+
+    let targetMob: MobActor | null = targetMobId ? (activeMobById.get(targetMobId) ?? null) : null;
+    if (!targetMob || !targetMob.alive) {
+      targetMob = findNearestAliveMob(activeMobActors, playerX, playerZ, ARCHER_RANGED_RANGE);
+    }
+
+    let targetPos: THREE.Vector3;
+    if (targetMob && targetMob.alive) {
+      targetMobId = targetMob.id;
+      playerYaw = Math.atan2(targetMob.x - playerX, targetMob.z - playerZ);
+      targetPos = new THREE.Vector3(targetMob.x, zoneHeightAt(activeZoneId, targetMob.x, targetMob.z) + 0.8, targetMob.z);
+    } else {
+      const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
+      targetPos = startPos.clone().addScaledVector(forward, 22);
+    }
+
+    const dir = targetPos.clone().sub(startPos).normalize();
+    const arrowGroup = buildArrowMesh();
+    arrowGroup.position.copy(startPos);
+    arrowGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    scene.add(arrowGroup);
+
+    audio.playSwordSlash(0);
+
+    const dmg = computeArrowDamage(playerLevel);
+
+    const trailGeo = new THREE.BufferGeometry();
+    const trailPositions = new Float32Array(6);
+    trailPositions.set([startPos.x, startPos.y, startPos.z, startPos.x, startPos.y, startPos.z]);
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+    const trailLine = new THREE.Line(
+      trailGeo,
+      new THREE.LineBasicMaterial({ color: 0x98f5d0, transparent: true, opacity: 0.85 })
+    );
+    scene.add(trailLine);
+
+    flyingArrows.push({
+      id: arrowIdCounter++,
+      mesh: arrowGroup,
+      startPos,
+      targetPos,
+      targetMobId: targetMob ? targetMob.id : null,
+      pos: startPos.clone(),
+      dir,
+      speed: 38.0,
+      progress: 0,
+      maxDistance: Math.max(3, startPos.distanceTo(targetPos)),
+      damage: dmg.damage,
+      isCrit: dmg.isCrit,
+      spawnTime: elapsed,
+      trailMesh: trailLine,
+      trailPositions,
+    });
+  };
+
+  const performAttack = (mob: MobActor | null) => {
     if (attackCooldown > 0) return;
-    attackCooldown = SWORDSMAN_ATTACK_COOLDOWN;
+    attackCooldown = getAttackCooldown();
+
+    if (activeHeroClass === 'archer') {
+      attackAnim.duration = 0.52;
+      attackAnim.timer = attackAnim.duration;
+      attackAnim.drawHoldTimer = 0;
+      if (mob && mob.alive) {
+        playerYaw = Math.atan2(mob.x - playerX, mob.z - playerZ);
+      }
+    } else {
+      performSwordSwing(mob);
+    }
+  };
+
+  const performSwordSwing = (mob: MobActor | null) => {
     const combo = comboCounter % 3;
     comboCounter++;
     attackAnim.comboIndex = combo;
-    attackAnim.duration = combo === 2 ? 0.40 : 0.32;
+    // Longer cinematic greatsword swings matching baked animations
+    attackAnim.duration = combo === 2 ? 1.30 : combo === 1 ? 1.05 : 0.95;
     attackAnim.timer = attackAnim.duration;
-    attackAnim.drawHoldTimer = 2.4;
+    // 2.6s total: 1.45s combat guard hold + 1.15s Sheathe animation (with sword docking at 0.55s)
+    attackAnim.drawHoldTimer = 2.6;
+    // Combo chaining window opens as swing finishes active arc and enters follow-through
+    attackCooldown = attackAnim.duration * 0.70;
 
     if (mob && mob.alive) {
       playerYaw = Math.atan2(mob.x - playerX, mob.z - playerZ);
@@ -464,21 +658,22 @@ export function mountPronteraScene(
     }
   };
 
-  const triggerMeleeAttack = () => {
+  const triggerAttack = () => {
     if (!isPlaying || attackCooldown > 0) return;
+    const range = getAttackRange();
     let target: MobActor | null = targetMobId ? activeMobById.get(targetMobId) ?? null : null;
     if (
       !target ||
       !target.alive ||
-      Math.hypot(target.x - playerX, target.z - playerZ) > SWORDSMAN_MELEE_RANGE + 1.4
+      Math.hypot(target.x - playerX, target.z - playerZ) > range + 1.4
     ) {
-      target = findNearestAliveMob(activeMobActors, playerX, playerZ, SWORDSMAN_MELEE_RANGE + 1.4);
+      target = findNearestAliveMob(activeMobActors, playerX, playerZ, range + 1.4);
     }
     if (target) {
       targetMobId = target.id;
       const dist = Math.hypot(target.x - playerX, target.z - playerZ);
-      if (dist > SWORDSMAN_MELEE_RANGE) {
-        const step = Math.min(dist - 1.35, 1.3);
+      if (dist > range) {
+        const step = Math.min(dist - range + 0.5, 1.3);
         const vx = (target.x - playerX) / Math.max(0.01, dist);
         const vz = (target.z - playerZ) / Math.max(0.01, dist);
         const res = activeNav.resolveCollision(playerX + vx * step, playerZ + vz * step, 0.58, playerX, playerZ);
@@ -488,9 +683,9 @@ export function mountPronteraScene(
       activePath = [];
       pendingAttackMobId = null;
       cursorRingMesh.visible = false;
-      performSwordSwing(target);
+      performAttack(target);
     } else {
-      performSwordSwing(null);
+      performAttack(null);
     }
   };
 
@@ -522,11 +717,12 @@ export function mountPronteraScene(
         if (mob && mob.alive) {
           targetMobId = mob.id;
           const dist = Math.hypot(mob.x - playerX, mob.z - playerZ);
-          if (dist <= SWORDSMAN_MELEE_RANGE) {
+          const range = getAttackRange();
+          if (dist <= range) {
             activePath = [];
             pendingAttackMobId = null;
             cursorRingMesh.visible = false;
-            performSwordSwing(mob);
+            performAttack(mob);
           } else {
             pendingAttackMobId = mob.id;
             const path = activeNav.findPath(playerX, playerZ, mob.x, mob.z);
@@ -607,7 +803,19 @@ export function mountPronteraScene(
     keys.add(e.code);
     if (isPlaying && (e.code === 'Space' || e.code === 'KeyF')) {
       e.preventDefault();
-      triggerMeleeAttack();
+      triggerAttack();
+    }
+    if (isPlaying && e.code === 'KeyP') {
+      e.preventDefault();
+      toggleHeroClass();
+    }
+    if (isPlaying && e.code === 'KeyG') {
+      if (heroModel) {
+        const next = HERO_WEAPON_IDS[(HERO_WEAPON_IDS.indexOf(heroModel.weaponId) + 1) % HERO_WEAPON_IDS.length];
+        setGlbWeapon(heroModel, buildHeroWeaponMesh(next, mats), next);
+      } else {
+        cycleHeroWeapon(hero);
+      }
     }
   };
   const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code);
@@ -780,6 +988,7 @@ export function mountPronteraScene(
     }
 
     onHudUpdate({
+      heroClass: activeHeroClass,
       zoneId: activeZoneId,
       zoneName: getZoneName(activeZoneId),
       x: Math.round(playerX),
@@ -807,6 +1016,8 @@ export function mountPronteraScene(
     if (nextZoneId !== activeZoneId) {
       if (activeZoneId === 'prontera') {
         scene.remove(pronteraGroup);
+      } else if (activeZoneId === 'muldgard') {
+        if (muldgardGroup) scene.remove(muldgardGroup);
       } else if (activeFieldZone) {
         scene.remove(activeFieldZone.group);
         activeFieldZone.dispose();
@@ -826,6 +1037,32 @@ export function mountPronteraScene(
         activeMobById = pronteraMobById;
         activeLanternLights = pronteraLanternLights;
         activeLanternHalos = pronteraLanternHalos;
+      } else if (nextZoneId === 'muldgard') {
+        if (!muldgardGroup) {
+          const built = buildMuldgardZone(mats);
+          muldgardGroup = built.group;
+          muldgardGroundPick = built.groundPickMesh;
+          muldgardWater = built.waterMeshes;
+          muldgardMobActors = built.mobActors;
+          muldgardMobHitTargets = built.mobHitTargets;
+          muldgardMobById = new Map(built.mobActors.map((m) => [m.id, m]));
+          muldgardLanternLights = built.lanternLights;
+          muldgardLanternHalos = built.lanternHalos;
+          muldgardDisposeFn = built.dispose;
+          scene.add(muldgardGroup);
+          upgradeSceneMaterialsToAdvancedPBR(scene, pbrUniforms, weatherUniforms);
+        } else {
+          scene.add(muldgardGroup);
+        }
+        activeNav = createZoneNavGrid(nextZoneId);
+        activeGroundPickMesh = muldgardGroundPick!;
+        activeWaterMeshes = muldgardWater;
+        activePortals = [];
+        activeMobActors = muldgardMobActors;
+        activeMobHitTargets = muldgardMobHitTargets;
+        activeMobById = muldgardMobById;
+        activeLanternLights = muldgardLanternLights;
+        activeLanternHalos = muldgardLanternHalos;
       } else {
         const built = buildFieldZoneScene(nextZoneId, mats, pbrUniforms, weatherUniforms);
         activeFieldZone = built;
@@ -916,6 +1153,9 @@ export function mountPronteraScene(
     if (attackAnim.timer > 0) attackAnim.timer = Math.max(0, attackAnim.timer - dt);
     if ((attackAnim.drawHoldTimer ?? 0) > 0) {
       attackAnim.drawHoldTimer = Math.max(0, (attackAnim.drawHoldTimer ?? 0) - dt);
+      if (attackAnim.drawHoldTimer <= 0.8) {
+        comboCounter = 0;
+      }
     }
 
     // 1. Update Dynamic Weather & Lightning System
@@ -1048,11 +1288,11 @@ export function mountPronteraScene(
         const pm = activeMobById.get(pendingAttackMobId);
         if (!pm || !pm.alive) {
           pendingAttackMobId = null;
-        } else if (Math.hypot(pm.x - playerX, pm.z - playerZ) <= SWORDSMAN_MELEE_RANGE) {
+        } else if (Math.hypot(pm.x - playerX, pm.z - playerZ) <= getAttackRange()) {
           activePath = [];
           pendingAttackMobId = null;
           cursorRingMesh.visible = false;
-          performSwordSwing(pm);
+          performAttack(pm);
         }
       }
 
@@ -1062,6 +1302,24 @@ export function mountPronteraScene(
       if (keys.has('KeyS') || keys.has('ArrowDown')) inZ += 1;
       if (keys.has('KeyA') || keys.has('ArrowLeft')) inX -= 1;
       if (keys.has('KeyD') || keys.has('ArrowRight')) inX += 1;
+
+      // Archer plants feet firmly in solid stance during bow draw & loose (no sliding across floor)
+      const isArcherShooting = activeHeroClass === 'archer' && attackAnim.timer > 0;
+      if (isArcherShooting) {
+        inX = 0;
+        inZ = 0;
+        activePath = [];
+        if (targetMobId) {
+          const tm = activeMobById.get(targetMobId);
+          if (tm && tm.alive) {
+            const targetAngle = Math.atan2(tm.x - playerX, tm.z - playerZ);
+            let diff = targetAngle - playerYaw;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            playerYaw += diff * (1 - Math.exp(-24 * dt));
+          }
+        }
+      }
 
       const walkSpeed = 7.8;
 
@@ -1139,18 +1397,124 @@ export function mountPronteraScene(
     moveSpeedGlobal = moveSpeed;
 
     const groundY = zoneHeightAt(activeZoneId, playerX, playerZ);
-    hero.root.position.set(playerX, groundY, playerZ);
-    hero.root.rotation.y = playerYaw;
 
-    if (moveSpeed > 0.25) {
-      walkPhase += moveSpeed * dt * 1.45;
-      const stepHalf = Math.floor(walkPhase / Math.PI);
-      if (stepHalf !== lastStepHalf) {
-        lastStepHalf = stepHalf;
-        audio.playFootstep(activeZoneId === 'prontera' && isCobbleRoad(playerX, playerZ));
+    if (activeHeroClass === 'swordsman') {
+      hero.root.position.set(playerX, groundY + HERO_GROUND_LIFT, playerZ);
+      hero.root.rotation.y = playerYaw;
+      if (heroModel) {
+        animateHeroModel(heroModel, moveSpeed, walkPhase, elapsed, dt, attackAnim);
+        updateHeroSlashArc(hero, attackAnim);
+      } else {
+        animateHeroGait(hero, moveSpeed, walkPhase, elapsed, dt, attackAnim);
+      }
+    } else {
+      archer.root.position.set(playerX, groundY + HERO_GROUND_LIFT, playerZ);
+      archer.root.rotation.y = playerYaw;
+      if (archerModel) {
+        archer.bodyGroup.visible = false;
+        animateArcherGlb(archerModel, moveSpeed, walkPhase, elapsed, dt, attackAnim, shootArrow);
+      } else {
+        archer.bodyGroup.visible = true;
+        animateArcherGait(archer, moveSpeed, walkPhase, elapsed, dt, attackAnim, shootArrow);
       }
     }
-    animateHeroGait(hero, moveSpeed, walkPhase, elapsed, dt, attackAnim);
+
+    // Update Flying Arrows
+    for (let i = flyingArrows.length - 1; i >= 0; i--) {
+      const arr = flyingArrows[i];
+      const step = arr.speed * dt;
+      arr.pos.addScaledVector(arr.dir, step);
+      arr.mesh.position.copy(arr.pos);
+      arr.progress += step;
+
+      // Update arrow trail line
+      const tp = arr.trailPositions;
+      tp[0] = arr.pos.x - arr.dir.x * 0.9;
+      tp[1] = arr.pos.y - arr.dir.y * 0.9;
+      tp[2] = arr.pos.z - arr.dir.z * 0.9;
+      tp[3] = arr.pos.x;
+      tp[4] = arr.pos.y;
+      tp[5] = arr.pos.z;
+      arr.trailMesh.geometry.attributes.position.needsUpdate = true;
+
+      let hit = false;
+      let hitMob: MobActor | null = null;
+      if (arr.targetMobId) {
+        hitMob = activeMobById.get(arr.targetMobId) ?? null;
+        if (hitMob && hitMob.alive) {
+          const mobPos = new THREE.Vector3(
+            hitMob.x,
+            zoneHeightAt(activeZoneId, hitMob.x, hitMob.z) + 0.8,
+            hitMob.z,
+          );
+          if (arr.pos.distanceTo(mobPos) < 1.3) {
+            hit = true;
+          }
+        }
+      }
+
+      if (!hit && arr.progress >= arr.maxDistance) {
+        hit = true;
+      }
+
+      if (hit) {
+        if (hitMob && hitMob.alive) {
+          hitMob.hitFlashTimer = 0.18;
+          const result = applyDamageToMob(hitMob, arr.damage, arr.isCrit);
+          audio.playMobHit(result.killed);
+
+          const push = result.killed ? 5.5 : arr.isCrit ? 4.0 : 2.4;
+          hitMob.knockVx = arr.dir.x * push;
+          hitMob.knockVz = arr.dir.z * push;
+
+          const py = zoneHeightAt(activeZoneId, hitMob.x, hitMob.z);
+          spawnPopup(
+            arr.isCrit ? `CRIT -${result.damage}!` : `-${result.damage}`,
+            arr.isCrit ? 'crit' : 'hit',
+            hitMob.x,
+            py + 1.55,
+            hitMob.z,
+          );
+
+          if (result.killed) {
+            hitMob.deathTimer = 0.34;
+            hitMob.hpBarGroup.visible = false;
+            playerZeny += result.zenyEarned;
+            playerKills += 1;
+            playerExp += result.expEarned;
+            spawnPopup(
+              `+${result.zenyEarned} Zeny`,
+              'reward',
+              hitMob.x,
+              py + 2.05,
+              hitMob.z,
+            );
+            while (playerExp >= expForNextLevel(playerLevel)) {
+              playerExp -= expForNextLevel(playerLevel);
+              playerLevel += 1;
+              spawnPopup(
+                `LEVEL UP! Lv.${playerLevel}`,
+                'levelup',
+                playerX,
+                zoneHeightAt(activeZoneId, playerX, playerZ) + 2.3,
+                playerZ,
+              );
+            }
+          } else {
+            hitMob.hpBarGroup.visible = true;
+          }
+          emitHudSnapshot();
+        }
+
+        scene.remove(arr.mesh);
+        scene.remove(arr.trailMesh);
+        arr.mesh.traverse((obj) => {
+          if ((obj as THREE.Mesh).geometry) (obj as THREE.Mesh).geometry.dispose();
+        });
+        arr.trailMesh.geometry.dispose();
+        flyingArrows.splice(i, 1);
+      }
+    }
 
     // 4. Cursor Ring Pulse & Rotation
     if (cursorRingMesh.visible) {
@@ -1170,9 +1534,11 @@ export function mountPronteraScene(
       fountainWater.rotation.z = elapsed * 0.15;
       sprayGroup.scale.y = 0.96 + Math.sin(elapsed * 5.2) * 0.04;
     }
-    const baseWaterY = activeZoneId === 'prontera' ? 0.085 : -0.35;
+    const baseWaterY = activeZoneId === 'prontera' ? 0.085 : activeZoneId === 'muldgard' ? 0.55 : -0.35;
     for (let i = 0; i < activeWaterMeshes.length; i++) {
-      activeWaterMeshes[i].position.y = baseWaterY + Math.sin(elapsed * 1.6 + i) * 0.012;
+      const wm = activeWaterMeshes[i];
+      const by = (wm.userData.baseY as number | undefined) ?? baseWaterY;
+      wm.position.y = by + Math.sin(elapsed * 1.6 + i) * 0.012;
     }
 
     for (let i = 0; i < activeMobActors.length; i++) {
@@ -1543,9 +1909,24 @@ export function mountPronteraScene(
       }
     },
     attackNearest: () => {
-      triggerMeleeAttack();
+      triggerAttack();
     },
+    toggleHeroClass: () => toggleHeroClass(),
+    setHeroClass: (cls: HeroClass) => setHeroClass(cls),
     toggleMute: () => audio.toggleMute(),
+    _debug: {
+      getArcher: () => archerModel,
+      getHero: () => heroModel,
+      camera,
+      scene,
+      setCamera: (dist: number, pitch: number, yaw: number) => {
+        camDist = targetCamDist = dist;
+        camPitch = targetCamPitch = pitch;
+        camYaw = targetCamYaw = yaw;
+      },
+      getState: () => ({ playerX, playerZ, playerYaw, attackAnim, isMoving: moveSpeedGlobal > 0.25 }),
+      triggerAttack: () => triggerAttack(),
+    },
     dispose: () => {
       disposed = true;
       cancelAnimationFrame(frameId);
@@ -1563,6 +1944,7 @@ export function mountPronteraScene(
       canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
       activeFieldZone?.dispose();
+      if (muldgardDisposeFn) muldgardDisposeFn();
       audio.dispose();
       weatherSystem.dispose();
       composer?.dispose();

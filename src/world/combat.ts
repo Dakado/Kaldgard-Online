@@ -1,4 +1,4 @@
-import { ZoneId, createZoneNavGrid, getPortalsForZone } from './fieldMaps';
+import { FieldZoneId, ZoneId, createZoneNavGrid, getPortalsForZone } from './fieldMaps';
 
 export type MobKind =
   | 'mire_slime'
@@ -145,7 +145,7 @@ export const FIELD_MOB_SPAWNS: MobSpawnSpec[] = [
   { id: 'mob_w3', kind: 'briar_boar', x: -104, z: -6 },
 ];
 
-const FIELD_ZONE_POOLS: Record<Exclude<ZoneId, 'prontera'>, MobKind[]> = {
+const FIELD_ZONE_POOLS: Record<FieldZoneId, MobKind[]> = {
   prt_fild08: [
     'wolf',
     'wolf',
@@ -204,6 +204,40 @@ const zoneSpawnCache = new Map<ZoneId, MobSpawnSpec[]>();
 
 export function getMobSpawnsForZone(zoneId: ZoneId): MobSpawnSpec[] {
   if (zoneId === 'prontera') return FIELD_MOB_SPAWNS;
+  // Pouštní loviště kolem Muldgardu (mimo hradby, v dunách)
+  if (zoneId === 'muldgard') {
+    const cached = zoneSpawnCache.get(zoneId);
+    if (cached) return cached;
+    const nav = createZoneNavGrid(zoneId);
+    const rand = seededMobRand(7710);
+    const pool: MobKind[] = [
+      'ember_beetle', 'briar_boar', 'wolf', 'goblin', 'venom_spitter',
+      'ember_beetle', 'wolf', 'goblin', 'briar_boar',
+    ];
+    const spawns: MobSpawnSpec[] = [];
+    const starters: [number, number][] = [
+      [-20, 96], [24, 100], [-46, 110], [52, 108], [0, 122], [-70, 60], [70, -60],
+    ];
+    starters.forEach(([sx, sz], idx) => {
+      if (!nav.pointHitsCollider(sx, sz, 1.25)) {
+        spawns.push({ id: `${zoneId}_starter_${idx}`, kind: pool[idx % pool.length], x: sx, z: sz });
+      }
+    });
+    for (let attempt = 0; attempt < 900 && spawns.length < 26; attempt++) {
+      const x = Math.round((rand() * 2 - 1) * 128);
+      const z = Math.round((rand() * 2 - 1) * 128);
+      if (Math.abs(x) < 80 && Math.abs(z) < 80) continue; // jen poušť za hradbami
+      if (nav.pointHitsCollider(x, z, 1.35)) continue;
+      let tooClose = false;
+      for (const s of spawns) {
+        if (Math.hypot(x - s.x, z - s.z) < 16) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      spawns.push({ id: `${zoneId}_mob_${spawns.length}`, kind: pool[spawns.length % pool.length], x, z });
+    }
+    zoneSpawnCache.set(zoneId, spawns);
+    return spawns;
+  }
   const cached = zoneSpawnCache.get(zoneId);
   if (cached) return cached;
 
@@ -331,8 +365,24 @@ export interface DamageResult {
 }
 
 export const SWORDSMAN_MELEE_RANGE = 2.75;
+export const ARCHER_RANGED_RANGE = 18.0;
 export const SWORDSMAN_ATTACK_COOLDOWN = 0.44;
+export const ARCHER_ATTACK_COOLDOWN = 0.52;
 export const MOB_RESPAWN_SECONDS = 8.0;
+
+export function computeArrowDamage(playerLevel: number, roll = Math.random()): {
+  damage: number;
+  isCrit: boolean;
+} {
+  const base = 18 + (playerLevel - 1) * 4.5;
+  const variance = Math.floor((roll * 9) - 3);
+  const isCrit = roll > 0.72; // Archers have higher critical chance
+  const raw = Math.max(10, base + variance);
+  return {
+    damage: isCrit ? Math.round(raw * 1.6) : raw,
+    isCrit,
+  };
+}
 
 export function computeSwordDamage(comboIndex: number, playerLevel: number, roll = Math.random()): {
   damage: number;

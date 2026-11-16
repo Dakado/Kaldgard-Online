@@ -1977,18 +1977,18 @@ export function createPronteraMaterials(
   gunmetalArmor.userData.pbrKind = 'metal';
   gunmetalArmor.userData.lockEnvIntensity = true;
 
-  // Calibrated forged dark carbon-steel blade (zero GPU bloom glare under all light angles)
+  // Calibrated bright battle steel - musi cist i z dalky proti tmave zemi.
   const forgedBlade = trackMat(
     new THREE.MeshPhysicalMaterial({
-      color: 0x5c6470,
+      color: 0x9aa3ad,
       normalMap: metalPbr.normal,
       normalScale: new THREE.Vector2(0.75, 0.75),
       roughnessMap: metalPbr.roughness,
-      roughness: 0.50,
-      metalness: 0.58,
+      roughness: 0.34,
+      metalness: 0.85,
       anisotropy: 0.32,
       clearcoat: 0.0,
-      envMapIntensity: 0.36,
+      envMapIntensity: 1.0,
     }),
   );
   forgedBlade.userData.pbrSkip = true;

@@ -19,6 +19,7 @@ import {
   ZoneId,
 } from '../scene/PronteraScene';
 import { getPortalsForZone } from '../world/fieldMaps';
+import { MULD_LANDMARKS } from '../world/muldgardLayout';
 import { LANDMARKS } from '../world/pronteraLayout';
 import { PronteraMinimap } from './PronteraMinimap';
 
@@ -38,6 +39,7 @@ interface PlayingHudProps {
   onSelectLandmark: (id: string) => void;
   onWarpZone: (zoneId: ZoneId, spawnX?: number, spawnZ?: number, spawnYaw?: number) => void;
   onMinimapWalk: (x: number, z: number) => void;
+  onToggleCharacter?: () => void;
 }
 
 const TIME_OPTIONS: { id: TimeOfDay; label: string }[] = [
@@ -74,6 +76,7 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
   onSelectLandmark,
   onWarpZone,
   onMinimapWalk,
+  onToggleCharacter,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const expPct = Math.min(100, Math.round((hud.exp / Math.max(1, hud.expNext)) * 100));
@@ -298,6 +301,61 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
                     </button>
                   );
                 })}
+                {/* Muldgard — pouštní město, zatím jen UI teleport (bez portálu) */}
+                <button
+                  key="muldgard"
+                  type="button"
+                  tabIndex={-1}
+                  aria-label="Pouštní město Muldgard"
+                  title="Pouštní město Muldgard — teleport (zatím bez portálu)"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onWarpZone('muldgard');
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#ffe9b8] hover:text-[#2a1c08] hover:bg-[#e8b84d] bg-[#3a2a12] border border-[#e8b84d]/45 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Muldgard
+                </button>
+              </>
+            ) : hud.zoneId === 'muldgard' ? (
+              <>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onWarpZone('prontera');
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#1a140a] bg-[#e2bc62] hover:bg-[#f5d47a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Zpět do Kaldgardu
+                </button>
+                {MULD_LANDMARKS.slice(0, 6).map((lm) => {
+                  const shortName = lm.name
+                    .replace('Muldgardské jezero', 'Jezero')
+                    .replace('Palác Muldgard', 'Palác')
+                    .replace('Chrám písků', 'Chrám')
+                    .replace('Velký bazar', 'Bazar')
+                    .replace('Karavanseraj', 'Karavana')
+                    .replace('Jižní brána', 'J. brána')
+                    .trim();
+                  return (
+                    <button
+                      key={lm.id}
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={lm.name}
+                      title={lm.subtitle}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onSelectLandmark(lm.id);
+                      }}
+                      className="px-2 py-1.5 rounded-lg text-xs font-medium text-[#ede3cf] hover:text-[#1a140a] hover:bg-[#e2bc62] bg-[#1f293a] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      {shortName}
+                    </button>
+                  );
+                })}
               </>
             ) : (
               <>
@@ -363,6 +421,34 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
               </>
             )}
           </div>
+
+          <div className="hidden lg:block w-px h-6 bg-[#b99b63]/25 shrink-0" />
+
+          {/* Character Class Switcher (Hotkey P) */}
+          <button
+            type="button"
+            tabIndex={-1}
+            title="Přepnout postavu: Rytíř / Šermíř ⚔️ ↔ Elfí hraničářka 🏹 (Klávesa P)"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onToggleCharacter?.();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide transition-all shadow cursor-pointer whitespace-nowrap bg-gradient-to-r from-[#213024] to-[#16241a] text-[#8ef5b4] hover:text-[#ffffff] hover:from-[#2e4232] hover:to-[#1e3324] border border-[#3cb56f]/50 hover:border-[#52dc8c]"
+          >
+            {hud.heroClass === 'archer' ? (
+              <>
+                <span className="text-sm">🏹</span>
+                <span>Elfí hraničářka</span>
+                <span className="text-[10px] text-[#65cf8c] font-mono font-normal ml-0.5">[P]</span>
+              </>
+            ) : (
+              <>
+                <span className="text-sm">⚔️</span>
+                <span>Rytíř / Šermíř</span>
+                <span className="text-[10px] text-[#a59578] font-mono font-normal ml-0.5">[P]</span>
+              </>
+            )}
+          </button>
 
           <div className="hidden lg:block w-px h-6 bg-[#b99b63]/25 shrink-0" />
 

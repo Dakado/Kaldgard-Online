@@ -35,6 +35,7 @@ export default function App() {
   const [muted, setMuted] = useState(true);
   const [contextLost, setContextLost] = useState(false);
   const [hud, setHud] = useState<HudSnapshot>({
+    heroClass: 'swordsman',
     zoneId: 'prontera',
     zoneName: getZoneName('prontera'),
     x: PLAYER_SPAWN.x,
@@ -74,6 +75,7 @@ export default function App() {
       },
     );
     controllerRef.current = ctrl;
+    (window as any).__PRONTERA_CTRL__ = ctrl;
 
     return () => {
       ctrl.dispose();
@@ -136,7 +138,11 @@ export default function App() {
     controllerRef.current?.walkToWorldPoint(x, z);
   }, []);
 
-  // Keyboard shortcuts for Title Start (Enter/Space) and HUD hotkeys (M/C)
+  const handleToggleCharacter = useCallback(() => {
+    controllerRef.current?.toggleHeroClass();
+  }, []);
+
+  // Keyboard shortcuts for Title Start (Enter/Space) and HUD hotkeys (M/C/P)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (mode === 'title' && (e.code === 'Enter' || e.code === 'Space')) {
@@ -149,12 +155,14 @@ export default function App() {
           handleToggleMute();
         } else if (e.code === 'KeyC') {
           handleResetNorth();
+        } else if (e.code === 'KeyP') {
+          handleToggleCharacter();
         }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, handleStart, handleToggleMute, handleResetNorth]);
+  }, [mode, handleStart, handleToggleMute, handleResetNorth, handleToggleCharacter]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#182230]">
@@ -197,6 +205,7 @@ export default function App() {
           onSelectLandmark={handleSelectLandmark}
           onWarpZone={handleWarpZone}
           onMinimapWalk={handleMinimapWalk}
+          onToggleCharacter={handleToggleCharacter}
         />
       )}
     </div>

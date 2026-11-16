@@ -10,7 +10,7 @@ import {
   findNearestAliveMob,
   getMobSpawnsForZone,
 } from './combat';
-import { FIELD_MAPS, ZoneId, createZoneNavGrid, zoneHeightAt, zoneTrailMaskAt } from './fieldMaps';
+import { FIELD_MAPS, FieldZoneId, createZoneNavGrid, zoneHeightAt, zoneTrailMaskAt } from './fieldMaps';
 import { PRONTERA_NAV } from './pathfinding';
 
 test('field mob spawns sit outside Prontera walls in walkable field spots', () => {
@@ -26,7 +26,7 @@ test('field mob spawns sit outside Prontera walls in walkable field spots', () =
 });
 
 test('all 4 Prontera field maps spawn Wolves, Goblins, and Tree Ents on walkable terrain', () => {
-  const fieldIds: Exclude<ZoneId, 'prontera'>[] = [
+  const fieldIds: FieldZoneId[] = [
     'prt_fild08',
     'prt_fild06',
     'prt_fild05',
@@ -92,7 +92,7 @@ test('findNearestAliveMob selects closest living mob within range', () => {
 });
 
 test('every elevated rocky terrace across all 4 field maps has a walkable ascent path to its summit', () => {
-  const fieldIds: Exclude<ZoneId, 'prontera'>[] = [
+  const fieldIds: FieldZoneId[] = [
     'prt_fild08',
     'prt_fild06',
     'prt_fild05',
@@ -132,7 +132,7 @@ test('every elevated rocky terrace across all 4 field maps has a walkable ascent
 });
 
 test('bridges on east and south field maps connect flush with riverbanks and are collision-free', () => {
-  const bridgedZones: Exclude<ZoneId, 'prontera'>[] = ['prt_fild08', 'prt_fild06'];
+  const bridgedZones: FieldZoneId[] = ['prt_fild08', 'prt_fild06'];
   for (const zoneId of bridgedZones) {
     const spec = FIELD_MAPS[zoneId];
     const nav = createZoneNavGrid(zoneId);

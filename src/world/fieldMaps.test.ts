@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FIELD_MAPS,
+  FieldZoneId,
   PRONTERA_PORTALS,
   ZoneId,
   createZoneNavGrid,
@@ -28,7 +29,7 @@ test('all 4 Prontera cardinal portals sit on clear ground and are reachable via 
 });
 
 test('each of the 4 Field Maps is ~4x Prontera area, has walkable spawns, and connects to all portals via A*', () => {
-  const fieldIds: Exclude<ZoneId, 'prontera'>[] = [
+  const fieldIds: FieldZoneId[] = [
     'prt_fild08',
     'prt_fild06',
     'prt_fild05',

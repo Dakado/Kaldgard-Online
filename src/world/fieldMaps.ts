@@ -1,5 +1,15 @@
 import { NavigationGrid, PRONTERA_NAV } from './pathfinding';
 import {
+  MULD_NAV_MAX,
+  MULD_NAV_MIN,
+  MULD_PLAYER_SPAWN,
+  MULD_LANDMARKS,
+  buildMuldgardColliders,
+  getMuldgardDistrictAt,
+  isMuldgardLakeBlocked,
+  muldgardHeightAt,
+} from './muldgardLayout';
+import {
   CircleCollider,
   LandmarkSpec,
   LANDMARKS,
@@ -13,10 +23,14 @@ import {
 
 export type ZoneId =
   | 'prontera'
+  | 'muldgard'
   | 'prt_fild08'
   | 'prt_fild06'
   | 'prt_fild05'
   | 'prt_fild01';
+
+/** Polní zóny s procedurálním terénem (Muldgard je druhé město, ne pole). */
+export type FieldZoneId = Exclude<ZoneId, 'prontera' | 'muldgard'>;
 
 export interface PortalSpec {
   id: string;
@@ -1251,7 +1265,7 @@ const PRT_FILD01: FieldMapSpec = {
   boulders: [],
 };
 
-export const FIELD_MAPS: Record<Exclude<ZoneId, 'prontera'>, FieldMapSpec> = {
+export const FIELD_MAPS: Record<FieldZoneId, FieldMapSpec> = {
   prt_fild08: PRT_FILD08,
   prt_fild06: PRT_FILD06,
   prt_fild05: PRT_FILD05,
@@ -1265,16 +1279,20 @@ populateFieldProps(PRT_FILD01, 4);
 
 export function getZoneName(zoneId: ZoneId): string {
   if (zoneId === 'prontera') return 'Hlavní město Kaldgard';
+  if (zoneId === 'muldgard') return 'Pouštní město Muldgard';
   return FIELD_MAPS[zoneId].name;
 }
 
 export function getPortalsForZone(zoneId: ZoneId): PortalSpec[] {
   if (zoneId === 'prontera') return PRONTERA_PORTALS;
+  // Muldgard zatím není v map systému ani portálech — jen UI teleport
+  if (zoneId === 'muldgard') return [];
   return FIELD_MAPS[zoneId].portals;
 }
 
 export function zoneTerrainHeightAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return groundHeightAt(x, z);
+  if (zoneId === 'muldgard') return muldgardHeightAt(x, z);
   const spec = FIELD_MAPS[zoneId];
   const tDist = computeTrailMinDist(x, z, spec.trails);
   return computeRawFieldHeight(spec, x, z, tDist);
@@ -1282,6 +1300,7 @@ export function zoneTerrainHeightAt(zoneId: ZoneId, x: number, z: number): numbe
 
 export function zoneHeightAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return groundHeightAt(x, z);
+  if (zoneId === 'muldgard') return muldgardHeightAt(x, z);
   const spec = FIELD_MAPS[zoneId];
   const tDist = computeTrailMinDist(x, z, spec.trails);
   const raw = computeRawFieldHeight(spec, x, z, tDist);
@@ -1294,6 +1313,7 @@ export function zoneHeightAt(zoneId: ZoneId, x: number, z: number): number {
 
 export function zoneTrailMaskAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return 0;
+  if (zoneId === 'muldgard') return 0;
   const spec = FIELD_MAPS[zoneId];
   const d = computeTrailMinDist(x, z, spec.trails);
   const edgeWobble = Math.sin(x * 0.25 + z * 0.21) * 0.62 + Math.cos(x * 0.43 - z * 0.37) * 0.32;
@@ -1303,6 +1323,7 @@ export function zoneTrailMaskAt(zoneId: ZoneId, x: number, z: number): number {
 
 export function zoneWaterDepthAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return 0;
+  if (zoneId === 'muldgard') return 0;
   const spec = FIELD_MAPS[zoneId];
   if (isOnBridge(x, z, spec.bridges, 0.35)) return 0;
   const h = zoneHeightAt(zoneId, x, z);
@@ -1311,6 +1332,7 @@ export function zoneWaterDepthAt(zoneId: ZoneId, x: number, z: number): number {
 
 export function zoneCliffSlopeAt(zoneId: ZoneId, x: number, z: number): number {
   if (zoneId === 'prontera') return 0;
+  if (zoneId === 'muldgard') return 0;
   const spec = FIELD_MAPS[zoneId];
   const rawAt = (px: number, pz: number) =>
     computeRawFieldHeight(spec, px, pz, computeTrailMinDist(px, pz, spec.trails));
@@ -1324,7 +1346,7 @@ export function zoneCliffSlopeAt(zoneId: ZoneId, x: number, z: number): number {
   return Math.hypot(gx, gz);
 }
 
-export function isFieldTerrainBlocked(zoneId: Exclude<ZoneId, 'prontera'>, x: number, z: number): boolean {
+export function isFieldTerrainBlocked(zoneId: FieldZoneId, x: number, z: number): boolean {
   const spec = FIELD_MAPS[zoneId];
   const lim = spec.playableExtent - 4;
   if (Math.abs(x) > lim || Math.abs(z) > lim) return true;
@@ -1346,6 +1368,7 @@ export function buildZoneColliders(zoneId: ZoneId): {
   circles: CircleCollider[];
 } {
   if (zoneId === 'prontera') return WORLD_COLLIDERS;
+  if (zoneId === 'muldgard') return buildMuldgardColliders();
   const spec = FIELD_MAPS[zoneId];
   const rects: RectCollider[] = [];
   const circles: CircleCollider[] = [];
@@ -1379,6 +1402,19 @@ export function buildZoneColliders(zoneId: ZoneId): {
 
 export function createZoneNavGrid(zoneId: ZoneId): NavigationGrid {
   if (zoneId === 'prontera') return PRONTERA_NAV;
+  if (zoneId === 'muldgard') {
+    const { rects, circles } = buildMuldgardColliders();
+    return new NavigationGrid({
+      minCoord: MULD_NAV_MIN,
+      maxCoord: MULD_NAV_MAX,
+      cellSize: 2,
+      rects,
+      circles,
+      actorRadius: 0.7,
+      // jezero je voda — průchozí jen mosty a ostrov
+      isBlockedFn: (x, z) => isMuldgardLakeBlocked(x, z),
+    });
+  }
   const spec = FIELD_MAPS[zoneId];
   const { rects, circles } = buildZoneColliders(zoneId);
   return new NavigationGrid({
@@ -1394,6 +1430,7 @@ export function createZoneNavGrid(zoneId: ZoneId): NavigationGrid {
 
 export function getZoneDistrictAt(zoneId: ZoneId, x: number, z: number): string {
   if (zoneId === 'prontera') return getDistrictAt(x, z);
+  if (zoneId === 'muldgard') return getMuldgardDistrictAt(x, z);
   const spec = FIELD_MAPS[zoneId];
   let best = spec.name;
   let bestD = 1e9;
@@ -1410,6 +1447,9 @@ export function getZoneDistrictAt(zoneId: ZoneId, x: number, z: number): string 
 export function getZoneLandmarks(zoneId: ZoneId): LandmarkSpec[] {
   if (zoneId === 'prontera') {
     return LANDMARKS;
+  }
+  if (zoneId === 'muldgard') {
+    return MULD_LANDMARKS;
   }
   const spec = FIELD_MAPS[zoneId];
   const scenicBridge = spec.bridges[0];
@@ -1450,6 +1490,7 @@ export function getZoneLandmarks(zoneId: ZoneId): LandmarkSpec[] {
 
 export function getZoneDefaultSpawn(zoneId: ZoneId): { x: number; z: number; yaw: number } {
   if (zoneId === 'prontera') return PLAYER_SPAWN;
+  if (zoneId === 'muldgard') return MULD_PLAYER_SPAWN;
   const spec = FIELD_MAPS[zoneId];
   return { x: spec.spawnX, z: spec.spawnZ, yaw: spec.spawnYaw };
 }

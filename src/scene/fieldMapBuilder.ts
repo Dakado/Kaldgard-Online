@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   FIELD_MAPS,
   FieldMapSpec,
+  FieldZoneId,
   ZoneId,
   getBridgeDeckY,
   getBridgeLocalCoords,
@@ -762,7 +763,7 @@ function buildFieldBridges(
 }
 
 export function buildFieldZoneScene(
-  zoneId: Exclude<ZoneId, 'prontera'>,
+  zoneId: FieldZoneId,
   mats: PronteraMaterials,
   pbrUniforms: PbrShaderUniforms,
   weatherUniforms: WeatherShaderUniforms,

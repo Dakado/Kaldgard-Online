@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import {
   FIELD_MAPS,
+  FieldZoneId,
   PRONTERA_PORTALS,
   ZoneId,
   getPortalsForZone,
@@ -9,6 +10,17 @@ import {
   zoneWaterDepthAt,
 } from '../world/fieldMaps';
 import { BUILDINGS, CITY_WALL_POS } from '../world/pronteraLayout';
+import {
+  MULD_BRIDGE_EW,
+  MULD_BRIDGE_NS,
+  MULD_BUILDINGS,
+  MULD_GARDENS,
+  MULD_ISLAND,
+  MULD_LAKE,
+  MULD_PYRAMIDS,
+  MULD_TENTS,
+  MULD_WALL_POS,
+} from '../world/muldgardLayout';
 
 interface PronteraMinimapProps {
   zoneId: ZoneId;
@@ -20,6 +32,7 @@ interface PronteraMinimapProps {
 
 const SIZE = 140;
 const PRONTERA_EXTENT = 108;
+const MULDGARD_EXTENT = 145;
 
 function toSvg(v: number, extent: number): number {
   return ((v + extent) / (extent * 2)) * SIZE;
@@ -34,7 +47,7 @@ function toWorld(px: number, extent: number): number {
  * sunlit olive-chartreuse meadows, winding ochre dirt trails, shadowed rocky cliff ridges,
  * deep navy water coves, border Prontera stone wall, and dense green tree clusters.
  */
-function buildFieldMinimapDataUrl(zoneId: Exclude<ZoneId, 'prontera'>): string {
+function buildFieldMinimapDataUrl(zoneId: FieldZoneId): string {
   if (typeof document === 'undefined') return '';
   const spec = FIELD_MAPS[zoneId];
   const res = 156;
@@ -142,11 +155,11 @@ export const PronteraMinimap: React.FC<PronteraMinimapProps> = ({
   camYaw,
   onMapClick,
 }) => {
-  const extent = zoneId === 'prontera' ? PRONTERA_EXTENT : FIELD_MAPS[zoneId].playableExtent;
+  const extent = zoneId === 'prontera' ? PRONTERA_EXTENT : zoneId === 'muldgard' ? MULDGARD_EXTENT : FIELD_MAPS[zoneId].playableExtent;
   const portals = getPortalsForZone(zoneId);
 
   const fieldBgUrl = useMemo(() => {
-    if (zoneId === 'prontera') return '';
+    if (zoneId === 'prontera' || zoneId === 'muldgard') return '';
     return buildFieldMinimapDataUrl(zoneId);
   }, [zoneId]);
 
@@ -288,6 +301,138 @@ export const PronteraMinimap: React.FC<PronteraMinimapProps> = ({
               fill="#ef2323"
               stroke="#fff4e0"
               strokeWidth={0.8}
+            />
+          ))}
+        </>
+      ) : zoneId === 'muldgard' ? (
+        <>
+          {/* Pouštní pozadí */}
+          <rect x={0} y={0} width={SIZE} height={SIZE} fill="#d9b380" />
+          {/* Pískové třídy */}
+          <rect
+            x={toSvg(-6.5, extent)}
+            y={toSvg(-64, extent)}
+            width={toSvg(6.5, extent) - toSvg(-6.5, extent)}
+            height={toSvg(108, extent) - toSvg(-64, extent)}
+            fill="#bd935f"
+          />
+          <rect
+            x={toSvg(-108, extent)}
+            y={toSvg(-6.5, extent)}
+            width={toSvg(108, extent) - toSvg(-108, extent)}
+            height={toSvg(6.5, extent) - toSvg(-6.5, extent)}
+            fill="#bd935f"
+          />
+          <rect
+            x={toSvg(-16.5, extent)}
+            y={toSvg(-16.5, extent)}
+            width={toSvg(16.5, extent) - toSvg(-16.5, extent)}
+            height={toSvg(16.5, extent) - toSvg(-16.5, extent)}
+            fill="#c9a06a"
+          />
+          {/* Hradby */}
+          <rect
+            x={toSvg(-MULD_WALL_POS, extent)}
+            y={toSvg(-MULD_WALL_POS, extent)}
+            width={toSvg(MULD_WALL_POS, extent) - toSvg(-MULD_WALL_POS, extent)}
+            height={toSvg(MULD_WALL_POS, extent) - toSvg(-MULD_WALL_POS, extent)}
+            fill="none"
+            stroke="#8a6f4d"
+            strokeWidth={2.2}
+          />
+          {/* Zahrada */}
+          {MULD_GARDENS.map((gd) => (
+            <rect
+              key={gd.id}
+              x={toSvg(gd.x1, extent)}
+              y={toSvg(gd.z1, extent)}
+              width={toSvg(gd.x2, extent) - toSvg(gd.x1, extent)}
+              height={toSvg(gd.z2, extent) - toSvg(gd.z1, extent)}
+              fill="#4e7a34"
+            />
+          ))}
+          {/* Budovy */}
+          {MULD_BUILDINGS.map((b) => {
+            const rotated = Math.abs(Math.sin(b.rotY)) > 0.7;
+            const bw = rotated ? b.depth : b.width;
+            const bd = rotated ? b.width : b.depth;
+            const fill =
+              b.kind === 'palace'
+                ? '#7a5c8f'
+                : b.kind === 'temple'
+                  ? '#a88d4f'
+                  : b.kind === 'shop'
+                    ? '#b56e52'
+                    : '#c9a06a';
+            return (
+              <rect
+                key={b.id}
+                x={toSvg(b.x - bw / 2, extent)}
+                y={toSvg(b.z - bd / 2, extent)}
+                width={toSvg(b.x + bw / 2, extent) - toSvg(b.x - bw / 2, extent)}
+                height={toSvg(b.z + bd / 2, extent) - toSvg(b.z - bd / 2, extent)}
+                fill={fill}
+                stroke="#4a3826"
+                strokeWidth={0.6}
+              />
+            );
+          })}
+          {/* Bazarové stany */}
+          {MULD_TENTS.map((s) => (
+            <rect
+              key={s.id}
+              x={toSvg(s.x - 1.6, extent)}
+              y={toSvg(s.z - 1.2, extent)}
+              width={toSvg(s.x + 1.6, extent) - toSvg(s.x - 1.6, extent)}
+              height={toSvg(s.z + 1.2, extent) - toSvg(s.z - 1.2, extent)}
+              fill="#efe3c2"
+              stroke="#2e6e46"
+              strokeWidth={0.5}
+            />
+          ))}
+          {/* Palácové jezero podle reference */}
+          <rect
+            x={toSvg(MULD_LAKE.x1, extent)}
+            y={toSvg(MULD_LAKE.z1, extent)}
+            width={toSvg(MULD_LAKE.x2, extent) - toSvg(MULD_LAKE.x1, extent)}
+            height={toSvg(MULD_LAKE.z2, extent) - toSvg(MULD_LAKE.z1, extent)}
+            fill="#2e7fa8"
+            stroke="#e8dc96"
+            strokeWidth={0.8}
+          />
+          {/* Mosty přes jezero */}
+          <rect
+            x={toSvg(MULD_BRIDGE_NS.x1, extent)}
+            y={toSvg(MULD_BRIDGE_NS.z1, extent)}
+            width={toSvg(MULD_BRIDGE_NS.x2, extent) - toSvg(MULD_BRIDGE_NS.x1, extent)}
+            height={toSvg(MULD_BRIDGE_NS.z2, extent) - toSvg(MULD_BRIDGE_NS.z1, extent)}
+            fill="#cbb994"
+          />
+          <rect
+            x={toSvg(MULD_BRIDGE_EW.x1, extent)}
+            y={toSvg(MULD_BRIDGE_EW.z1, extent)}
+            width={toSvg(MULD_BRIDGE_EW.x2, extent) - toSvg(MULD_BRIDGE_EW.x1, extent)}
+            height={toSvg(MULD_BRIDGE_EW.z2, extent) - toSvg(MULD_BRIDGE_EW.z1, extent)}
+            fill="#cbb994"
+          />
+          {/* Palácový ostrov */}
+          <rect
+            x={toSvg(MULD_ISLAND.x1, extent)}
+            y={toSvg(MULD_ISLAND.z1, extent)}
+            width={toSvg(MULD_ISLAND.x2, extent) - toSvg(MULD_ISLAND.x1, extent)}
+            height={toSvg(MULD_ISLAND.z2, extent) - toSvg(MULD_ISLAND.z1, extent)}
+            fill="#c9b183"
+            stroke="#6b5233"
+            strokeWidth={0.6}
+          />
+          {/* Pyramidy v poušti */}
+          {MULD_PYRAMIDS.map((p) => (
+            <polygon
+              key={p.id}
+              points={`${toSvg(p.x, extent)},${toSvg(p.z - p.size / 2, extent)} ${toSvg(p.x + p.size / 2, extent)},${toSvg(p.z + p.size / 2, extent)} ${toSvg(p.x - p.size / 2, extent)},${toSvg(p.z + p.size / 2, extent)}`}
+              fill="#b89a68"
+              stroke="#6b5233"
+              strokeWidth={0.7}
             />
           ))}
         </>
