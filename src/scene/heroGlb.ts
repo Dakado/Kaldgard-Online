@@ -3,7 +3,6 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { HeroAttackAnimState, HeroWeaponId } from './characterBuilder';
 
 export const HERO_MODEL_URL = '/models/elven_swordsman_animated.glb';
-export const HERO_FALLBACK_URL = '/models/paladin_mixamo.glb';
 const HERO_TARGET_HEIGHT = 1.86;
 
 const BONE_NAME_FALLBACKS = {
@@ -76,15 +75,8 @@ const GLB_BASE_POSE: Record<BoneKey, THREE.Vector3> = {
 
 export async function loadHeroGlb(): Promise<HeroGlbModel> {
   const loader = new GLTFLoader();
-  let gltf: any;
-
-  try {
-    gltf = await loader.loadAsync(HERO_MODEL_URL);
-    console.log('Loaded photorealistic animated Elven Swordsman with clips:', gltf.animations?.map((a: any) => a.name));
-  } catch (err) {
-    console.warn('Animated swordsman GLB not found, loading fallback:', err);
-    gltf = await loader.loadAsync(HERO_FALLBACK_URL);
-  }
+  const gltf = await loader.loadAsync(HERO_MODEL_URL);
+  console.log('Loaded photorealistic animated Elven Swordsman with clips:', gltf.animations?.map((a: any) => a.name));
 
   const scene = gltf.scene;
 

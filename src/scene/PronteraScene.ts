@@ -338,7 +338,7 @@ export function mountPronteraScene(
       }
       (window as unknown as { __heroModel?: HeroGlbModel }).__heroModel = model;
     })
-    .catch((err) => console.error('Nepodařilo se načíst swordsman_blender.glb', err));
+    .catch((err) => console.error('Nepodařilo se načíst elven_swordsman_animated.glb', err));
 
   // Trellis 2 3D Elfí hraničářka (GLB s 700k polygony a PBR texturami)
   let archerModel: ArcherGlbModel | null = null;

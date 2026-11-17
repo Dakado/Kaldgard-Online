@@ -4,7 +4,6 @@ import type { HeroAttackAnimState } from './characterBuilder';
 import { buildElvenRecurveBow, buildQuiverWithArrows, buildArrowMesh } from './archerBuilder';
 
 export const ARCHER_ANIMATED_URL = '/models/elven_archer_animated.glb';
-export const ARCHER_TRELLIS_URL = '/models/elven_archer_trellis.glb';
 const ARCHER_TARGET_HEIGHT = 1.76;
 
 export interface ArcherGlbModel {
@@ -30,16 +29,8 @@ export interface ArcherGlbModel {
  */
 export async function loadArcherGlb(): Promise<ArcherGlbModel> {
   const loader = new GLTFLoader();
-  let gltf: any;
-
-  // Try loading animated GLB first, fallback to trellis GLB
-  try {
-    gltf = await loader.loadAsync(ARCHER_ANIMATED_URL);
-    console.log('Loaded animated Elven Archer with animations:', gltf.animations?.map((a: any) => a.name));
-  } catch {
-    console.log('Animated archer GLB not found, loading base model...');
-    gltf = await loader.loadAsync(ARCHER_TRELLIS_URL);
-  }
+  const gltf = await loader.loadAsync(ARCHER_ANIMATED_URL);
+  console.log('Loaded animated Elven Archer with animations:', gltf.animations?.map((a: any) => a.name));
 
   const scene = gltf.scene;
 
